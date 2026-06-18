@@ -1,0 +1,50 @@
+{
+  "_comment": "Synthetic complete sets for offline demonstration of the detector. Prices are illustrative, not live Polymarket data. ask/bid are [price, size] or null.",
+  "sets": [
+    {
+      "market_id": "demo-binary-buyset",
+      "question": "Will it rain in NYC on 2026-07-01?",
+      "neg_risk": false,
+      "exhaustive": true,
+      "end_date": "2026-07-02T00:00:00Z",
+      "legs": [
+        {"token_id": "yes-rain", "outcome": "Yes", "ask": [0.62, 120], "bid": [0.60, 150]},
+        {"token_id": "no-rain",  "outcome": "No",  "ask": [0.36, 90],  "bid": [0.34, 80]}
+      ]
+    },
+    {
+      "market_id": "demo-binary-mintsell",
+      "question": "Will the Fed cut rates in July 2026?",
+      "neg_risk": false,
+      "exhaustive": true,
+      "end_date": "2026-08-01T00:00:00Z",
+      "legs": [
+        {"token_id": "yes-cut", "outcome": "Yes", "ask": [0.58, 200], "bid": [0.55, 300]},
+        {"token_id": "no-cut",  "outcome": "No",  "ask": [0.50, 200], "bid": [0.50, 250]}
+      ]
+    },
+    {
+      "market_id": "demo-negrisk-buyset",
+      "question": "Who wins the 2026 election? (3-way)",
+      "neg_risk": true,
+      "exhaustive": true,
+      "end_date": "2026-11-04T00:00:00Z",
+      "legs": [
+        {"token_id": "cand-a", "outcome": "Candidate A", "ask": [0.30, 500], "bid": [0.28, 400]},
+        {"token_id": "cand-b", "outcome": "Candidate B", "ask": [0.33, 450], "bid": [0.31, 420]},
+        {"token_id": "cand-c", "outcome": "Candidate C", "ask": [0.34, 380], "bid": [0.32, 360]}
+      ]
+    },
+    {
+      "market_id": "demo-no-arb",
+      "question": "Will Bitcoin close above $200k in 2026?",
+      "neg_risk": false,
+      "exhaustive": true,
+      "end_date": "2026-12-31T00:00:00Z",
+      "legs": [
+        {"token_id": "yes-btc", "outcome": "Yes", "ask": [0.51, 100], "bid": [0.49, 120]},
+        {"token_id": "no-btc",  "outcome": "No",  "ask": [0.51, 100], "bid": [0.49, 120]}
+      ]
+    }
+  ]
+}
