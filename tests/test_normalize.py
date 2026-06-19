@@ -2,8 +2,11 @@ import unittest
 
 from polymarket_arb.normalize import (
     _maybe_json_list,
+    complete_set_from_event,
     complete_set_from_market,
+    indicative_event_cost,
     indicative_set_cost,
+    submarket_yes_token,
     top_of_book,
 )
 
@@ -79,6 +82,68 @@ class TestIndicativeCost(unittest.TestCase):
 
     def test_missing_prices(self):
         self.assertIsNone(indicative_set_cost({}))
+
+
+def _submarket(group_title, yes_token, no_token, yes_price, no_price):
+    return {
+        "groupItemTitle": group_title,
+        "question": f"Will {group_title} win?",
+        "clobTokenIds": f'["{yes_token}", "{no_token}"]',
+        "outcomes": '["Yes", "No"]',
+        "outcomePrices": f'["{yes_price}", "{no_price}"]',
+    }
+
+
+def _event(neg_risk=True):
+    return {
+        "id": "evt-1",
+        "title": "Who wins?",
+        "endDate": "2026-11-04T00:00:00Z",
+        "negRisk": neg_risk,
+        "markets": [
+            _submarket("A", "a-yes", "a-no", "0.30", "0.70"),
+            _submarket("B", "b-yes", "b-no", "0.33", "0.67"),
+            _submarket("C", "c-yes", "c-no", "0.34", "0.66"),
+        ],
+    }
+
+
+class TestSubmarketYesToken(unittest.TestCase):
+    def test_picks_yes_token_by_outcome(self):
+        m = _submarket("A", "a-yes", "a-no", "0.3", "0.7")
+        self.assertEqual(submarket_yes_token(m), "a-yes")
+
+    def test_falls_back_to_first_token(self):
+        m = {"clobTokenIds": '["only"]', "outcomes": "[]"}
+        self.assertEqual(submarket_yes_token(m), "only")
+
+
+class TestCompleteSetFromEvent(unittest.TestCase):
+    def test_builds_three_yes_legs_with_books(self):
+        books = {
+            "a-yes": {"asks": [{"price": "0.30", "size": "500"}], "bids": []},
+            "b-yes": {"asks": [{"price": "0.33", "size": "450"}], "bids": []},
+            "c-yes": {"asks": [{"price": "0.34", "size": "380"}], "bids": []},
+        }
+        cs = complete_set_from_event(_event(), books)
+        self.assertEqual(len(cs.legs), 3)
+        self.assertTrue(cs.neg_risk)
+        self.assertTrue(cs.exhaustive)
+        self.assertEqual([leg.outcome for leg in cs.legs], ["A", "B", "C"])
+        self.assertEqual(cs.legs[0].best_ask.price, 0.30)
+
+    def test_non_negrisk_event_not_exhaustive(self):
+        cs = complete_set_from_event(_event(neg_risk=False), {})
+        self.assertFalse(cs.neg_risk)
+        self.assertFalse(cs.exhaustive)
+
+    def test_returns_none_with_too_few_legs(self):
+        event = {"id": "e", "title": "t", "markets": [
+            _submarket("A", "a-yes", "a-no", "0.5", "0.5")]}
+        self.assertIsNone(complete_set_from_event(event, {}))
+
+    def test_indicative_event_cost_sums_yes_prices(self):
+        self.assertAlmostEqual(indicative_event_cost(_event()), 0.97, places=6)
 
 
 if __name__ == "__main__":

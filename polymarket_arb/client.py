@@ -58,6 +58,32 @@ class PolymarketClient:
             offset += page_size
         return markets
 
+    def active_events(self, page_size: int = 200, max_pages: int = 40) -> list[dict]:
+        """Fetch open events (which group multi-candidate sub-markets) from Gamma."""
+        events: list[dict] = []
+        offset = 0
+        for _ in range(max_pages):
+            resp = self.session.get(
+                f"{self.gamma_base}/events",
+                params={
+                    "active": "true",
+                    "closed": "false",
+                    "archived": "false",
+                    "limit": page_size,
+                    "offset": offset,
+                },
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            batch = resp.json()
+            if not batch:
+                break
+            events.extend(batch)
+            if len(batch) < page_size:
+                break
+            offset += page_size
+        return events
+
     def order_book(self, token_id: str) -> dict:
         """Fetch a single token's order book from the CLOB."""
         resp = self.session.get(

@@ -24,6 +24,12 @@ tokens of a binary market trade on **separate order books**, `ask(Yes) +
 ask(No)` can drift below $1 when the books are stale or crossed — that gap is
 the arbitrage.
 
+A live `scan` assembles **both**: every binary market, and every negative-risk
+event group (e.g. "Who wins the election?") where the candidates' `Yes` prices
+sum below $1. Only negRisk events are grouped, because only they are designed
+to be collectively exhaustive — a buy-all-`Yes` basket is a guaranteed $1 only
+when one candidate is certain to win.
+
 ## Quick start
 
 ```bash
@@ -77,7 +83,7 @@ robust to your probability estimate being slightly wrong.
 
 The live `scan`/`snapshot` commands talk to Polymarket's public APIs:
 
-- `gamma-api.polymarket.com` — market metadata
+- `gamma-api.polymarket.com` — market metadata and `/events` (candidate groups)
 - `clob.polymarket.com` — order books
 
 In a sandboxed environment with an **egress allowlist** (e.g. Claude Code on

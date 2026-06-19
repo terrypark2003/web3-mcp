@@ -120,3 +120,95 @@ def indicative_set_cost(market: dict) -> Optional[float]:
     if not prices:
         return None
     return sum(prices)
+
+
+# --------------------------------------------------------------------------- #
+# Negative-risk event groups (multi-candidate markets)
+# --------------------------------------------------------------------------- #
+#
+# A negative-risk event (e.g. "Who wins the election?") groups several binary
+# sub-markets — one "Will candidate X win?" per candidate. The candidates are
+# mutually exclusive and, for negRisk events, collectively exhaustive, so the
+# "Yes" tokens across all sub-markets form a complete set: buy one Yes of each
+# for < $1 total and exactly one settles to $1.
+#
+# Each sub-market has outcomes ["Yes", "No"] and clobTokenIds aligned to them;
+# we take the "Yes" token from each. Labels prefer Gamma's groupItemTitle.
+
+
+def _yes_index(outcomes: list) -> int:
+    for i, outcome in enumerate(outcomes):
+        if str(outcome).strip().lower() in ("yes", "true"):
+            return i
+    return 0
+
+
+def submarket_yes_token(market: dict) -> Optional[str]:
+    """The token id of a sub-market's "Yes" outcome (for batch book fetching)."""
+    token_ids = [str(t) for t in _maybe_json_list(market.get("clobTokenIds"))]
+    if not token_ids:
+        return None
+    outcomes = [str(o) for o in _maybe_json_list(market.get("outcomes"))]
+    if len(token_ids) == len(outcomes):
+        return token_ids[_yes_index(outcomes)]
+    return token_ids[0]
+
+
+def _yes_leg_from_submarket(
+    market: dict, books_by_token: dict[str, dict]
+) -> Optional[Leg]:
+    token_id = submarket_yes_token(market)
+    if token_id is None:
+        return None
+    best_ask, best_bid = top_of_book(books_by_token.get(token_id))
+    label = (
+        market.get("groupItemTitle")
+        or market.get("question")
+        or token_id
+    )
+    return Leg(token_id=token_id, outcome=str(label), best_ask=best_ask, best_bid=best_bid)
+
+
+def complete_set_from_event(
+    event: dict, books_by_token: dict[str, dict]
+) -> Optional[CompleteSet]:
+    """Build a complete set from a multi-candidate event's "Yes" legs.
+
+    Returns None if fewer than two parseable legs are found. ``exhaustive`` is
+    only set True for negRisk events, where the candidate set is designed to be
+    collectively exhaustive; for other events the buy-all-Yes payoff is not a
+    guaranteed $1 and the caller should treat it with care.
+    """
+    legs: list[Leg] = []
+    for submarket in event.get("markets") or []:
+        leg = _yes_leg_from_submarket(submarket, books_by_token)
+        if leg is not None:
+            legs.append(leg)
+    if len(legs) < 2:
+        return None
+
+    neg_risk = bool(event.get("negRisk", False))
+    return CompleteSet(
+        market_id=str(event.get("id", "")),
+        question=str(event.get("title") or event.get("question") or ""),
+        legs=legs,
+        neg_risk=neg_risk,
+        exhaustive=neg_risk,
+        end_date=event.get("endDate"),
+    )
+
+
+def indicative_event_cost(event: dict) -> Optional[float]:
+    """Sum of indicative "Yes" prices across an event's sub-markets (pre-filter)."""
+    total = 0.0
+    found = False
+    for submarket in event.get("markets") or []:
+        outcomes = [str(o) for o in _maybe_json_list(submarket.get("outcomes"))]
+        prices = [_to_float(p) for p in _maybe_json_list(submarket.get("outcomePrices"))]
+        if not prices:
+            continue
+        idx = _yes_index(outcomes) if len(outcomes) == len(prices) else 0
+        if idx < len(prices) and prices[idx] is not None:
+            total += prices[idx]
+            found = True
+    return total if found else None

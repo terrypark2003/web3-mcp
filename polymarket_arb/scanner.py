@@ -13,7 +13,14 @@ from typing import Optional
 
 from .detect import FeeModel, scan_sets
 from .models import ARB_BUY_SET, CompleteSet, Opportunity
-from .normalize import complete_set_from_market, indicative_set_cost
+from .normalize import (
+    _maybe_json_list,
+    complete_set_from_event,
+    complete_set_from_market,
+    indicative_event_cost,
+    indicative_set_cost,
+    submarket_yes_token,
+)
 
 
 def build_sets_live(
@@ -22,31 +29,62 @@ def build_sets_live(
     limit: Optional[int] = None,
     prefilter_margin: float = 0.02,
 ) -> list[CompleteSet]:
-    """Fetch markets, pre-filter, and fetch order books for promising ones."""
-    markets = client.active_markets()
+    """Fetch markets + negRisk event groups, pre-filter, and fetch order books.
 
-    # Cheap pre-filter: indicative outcome prices summing below 1 + margin are
-    # the only candidates worth a live book lookup. Markets with no indicative
-    # price are kept (we cannot rule them out cheaply).
-    candidates = []
-    for market in markets:
+    Two kinds of complete set are assembled:
+
+    * Binary markets — each market's [Yes, No] tokens (2-leg sets).
+    * Negative-risk event groups — the "Yes" token of every candidate
+      sub-market (N-leg sets). Only negRisk events are grouped, because only
+      they are designed to be collectively exhaustive (a buy-all-Yes basket is
+      a guaranteed $1 only when the candidates are exhaustive).
+
+    The cheap pre-filter keeps anything whose indicative prices sum below
+    1 + margin (or that has no indicative price), so we only spend order-book
+    requests on plausible arbitrages.
+    """
+    # --- Binary markets ---------------------------------------------------- #
+    market_candidates = []
+    for market in client.active_markets():
         cost = indicative_set_cost(market)
         if cost is None or cost <= 1.0 + prefilter_margin:
-            candidates.append(market)
+            market_candidates.append(market)
+
+    # --- Negative-risk event groups --------------------------------------- #
+    try:
+        events = client.active_events()
+    except Exception:  # noqa: BLE001 - events are additive; a failure shouldn't abort
+        events = []
+    event_candidates = []
+    for event in events:
+        if not event.get("negRisk"):
+            continue
+        cost = indicative_event_cost(event)
+        if cost is None or cost <= 1.0 + prefilter_margin:
+            event_candidates.append(event)
+
     if limit is not None:
-        candidates = candidates[:limit]
+        market_candidates = market_candidates[:limit]
+        event_candidates = event_candidates[:limit]
 
-    # Collect every token id we need a book for, then batch-fetch.
-    from .normalize import _maybe_json_list  # local import: internal helper
-
+    # Collect every token id we need a book for, then batch-fetch once.
     token_ids: list[str] = []
-    for market in candidates:
+    for market in market_candidates:
         token_ids.extend(str(t) for t in _maybe_json_list(market.get("clobTokenIds")))
+    for event in event_candidates:
+        for submarket in event.get("markets") or []:
+            token = submarket_yes_token(submarket)
+            if token:
+                token_ids.append(token)
     books_by_token = client.order_books(token_ids)
 
     sets: list[CompleteSet] = []
-    for market in candidates:
+    for market in market_candidates:
         cs = complete_set_from_market(market, books_by_token)
+        if cs is not None:
+            sets.append(cs)
+    for event in event_candidates:
+        cs = complete_set_from_event(event, books_by_token)
         if cs is not None:
             sets.append(cs)
     return sets
