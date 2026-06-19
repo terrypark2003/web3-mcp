@@ -17,6 +17,7 @@ import sys
 
 from .detect import FeeModel, scan_sets
 from .demo import load_demo_sets
+from .portfolio import SizingConfig, allocate_portfolio, format_portfolio
 from .scanner import format_table, scan_live, write_json
 
 
@@ -71,6 +72,36 @@ def cmd_scan(args) -> int:
     return 0
 
 
+def cmd_allocate(args) -> int:
+    fees = _fee_model(args)
+    if args.live:
+        from .client import PolymarketClient
+
+        client = PolymarketClient()
+        try:
+            opportunities = scan_live(client, fees, limit=args.limit)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Live scan failed: {exc}", file=sys.stderr)
+            print(
+                "Ensure gamma-api.polymarket.com and clob.polymarket.com are on "
+                "the egress allowlist.",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        opportunities = scan_sets(load_demo_sets(), fees)
+
+    cfg = SizingConfig(
+        bankroll=args.bankroll,
+        per_market_cap_frac=args.per_market_cap,
+        min_stake=args.min_stake,
+        max_deployed_frac=args.max_deployed,
+    )
+    summary = allocate_portfolio(opportunities, cfg)
+    print(format_portfolio(summary))
+    return 0
+
+
 def cmd_snapshot(args) -> int:
     import json
     from .client import PolymarketClient
@@ -104,6 +135,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--limit", type=int, default=None,
                         help="Cap the number of markets scanned (after pre-filter)")
     p_scan.set_defaults(func=cmd_scan)
+
+    p_alloc = sub.add_parser(
+        "allocate", help="Size bankroll across detected arbitrage opportunities"
+    )
+    _add_common(p_alloc)
+    p_alloc.add_argument("--bankroll", type=float, required=True,
+                         help="Total capital available (USDC)")
+    p_alloc.add_argument("--per-market-cap", type=float, default=0.05,
+                         help="Max fraction of bankroll on any one market (default: 0.05)")
+    p_alloc.add_argument("--min-stake", type=float, default=1.0,
+                         help="Fee/gas floor: skip bets smaller than this (USDC, default: 1)")
+    p_alloc.add_argument("--max-deployed", type=float, default=1.0,
+                         help="Cap on total fraction of bankroll deployed (default: 1.0)")
+    p_alloc.add_argument("--live", action="store_true",
+                         help="Use live Polymarket data instead of the demo fixture")
+    p_alloc.add_argument("--limit", type=int, default=None,
+                         help="Cap markets scanned when --live (after pre-filter)")
+    p_alloc.set_defaults(func=cmd_allocate)
 
     p_snap = sub.add_parser("snapshot", help="Dump live markets + books to JSON")
     p_snap.add_argument("--out", default="polymarket_snapshot.json",

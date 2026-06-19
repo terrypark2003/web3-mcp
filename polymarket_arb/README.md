@@ -39,10 +39,39 @@ python -m polymarket_arb scan --min-edge 0.01 --limit 300 --json opps.json
 
 # Dump a live market+book snapshot for offline analysis:
 python -m polymarket_arb snapshot --out snap.json
+
+# Size a bankroll across the detected edges ("many small bets"):
+python -m polymarket_arb allocate --bankroll 1000 --per-market-cap 0.05
 ```
 
 Tunables (`scan`/`demo`): `--min-edge` (min net USDC/set), `--min-size` (min
 sets at top of book), `--fee-rate` (taker fee as a fraction of notional).
+
+## Sizing: making many small bets actually work
+
+Volume does not *create* an edge — it *reveals* one. Spreading capital over
+many bets makes your realized return converge toward the per-bet expected
+value (law of large numbers). That helps only if each bet is **+EV**; on a
+−EV bet the same math makes losses near-certain. So the job is: find +EV
+bets (the scanner does this), then size them so the edge compounds without
+risking ruin.
+
+`allocate` operationalizes that for arbitrage opportunities:
+
+- **Per-market cap** (`--per-market-cap`, default 5%) bounds how much rides on
+  any single market resolution — the real tail risk in a "risk-free" arb.
+- **Depth** caps each stake at what the order book can actually fill.
+- **Bankroll / max-deployed** (`--max-deployed`) cap total capital at risk.
+- **Min stake** (`--min-stake`) is a fee/gas floor so tiny bets aren't placed.
+
+Capital is spread greedily across the best risk-adjusted edges (instant
+`MINT_SELL` first, then `BUY_SET` by APR). Diversification only reduces risk
+if the markets resolve **independently** — 100 correlated bets are one bet.
+
+For *directional* bets (a genuine forecasting edge, which the scanner does not
+generate), `portfolio.kelly_fraction` / `kelly_stake` give growth-optimal
+**fractional-Kelly** sizing — use a fraction like 0.5, which is far more
+robust to your probability estimate being slightly wrong.
 
 ## Network access
 
@@ -94,6 +123,7 @@ polymarket_arb/
   normalize.py  Raw Gamma/CLOB JSON -> models   (no network)
   client.py     Public read-only HTTP client (requests)
   scanner.py    Fetch -> prefilter -> detect -> rank -> report
+  portfolio.py  Bankroll allocation + fractional-Kelly sizing (no network)
   demo.py       Loads the bundled synthetic fixture
   cli.py        argparse CLI: demo / scan / snapshot
 tests/          unittest suite (stdlib only)
