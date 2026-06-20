@@ -109,5 +109,54 @@ class TestCommands(unittest.TestCase):
         self.assertIn("missing creds", out)
 
 
+class TestAlerts(unittest.TestCase):
+    def test_first_poll_fires_then_dedups(self):
+        op = buy_set_op("abc")
+        bot = make_bot([op])
+        first = bot.poll_alerts()
+        self.assertIsNotNone(first)
+        self.assertIn("abc", first)
+        # Same opportunity still present -> no repeat alert.
+        self.assertIsNone(bot.poll_alerts())
+
+    def test_new_opportunity_fires(self):
+        ops = [buy_set_op("abc")]
+        bot = make_bot(ops)
+        bot.poll_alerts()  # sees abc
+        ops.append(buy_set_op("def"))  # def appears
+        out = bot.poll_alerts()
+        self.assertIsNotNone(out)
+        self.assertIn("def", out)
+        self.assertNotIn("abc", out)
+
+    def test_disappear_then_reappear_refires(self):
+        ops = [buy_set_op("abc")]
+        bot = make_bot(ops)
+        bot.poll_alerts()        # sees abc
+        ops.clear()
+        self.assertIsNone(bot.poll_alerts())  # gone
+        ops.append(buy_set_op("abc"))         # back
+        self.assertIsNotNone(bot.poll_alerts())
+
+    def test_alerts_off_silences(self):
+        bot = make_bot([buy_set_op("abc")])
+        self.assertIn("OFF", bot.handle(OWNER, "/alerts off"))
+        self.assertIsNone(bot.poll_alerts())
+        self.assertIn("ON", bot.handle(OWNER, "/alerts on"))
+        self.assertIsNotNone(bot.poll_alerts())
+
+    def test_min_edge_filters_alerts(self):
+        # buy_set_op edge_pct is 2.04; threshold 3.0 should suppress it.
+        cfg = ExecutionConfig.from_env({})
+        bot = ArbBot(
+            owner_id=OWNER,
+            scan_fn=lambda: [buy_set_op("abc")],
+            executor=PolymarketExecutor(cfg),
+            exec_config=cfg,
+            min_alert_edge_pct=3.0,
+        )
+        self.assertIsNone(bot.poll_alerts())
+
+
 if __name__ == "__main__":
     unittest.main()

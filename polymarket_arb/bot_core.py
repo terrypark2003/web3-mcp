@@ -29,8 +29,25 @@ HELP = (
     "/execute <market_id> - stage a trade, then /confirm to place it\n"
     "/confirm - execute the staged trade (live only; dry-run otherwise)\n"
     "/cancel - discard the staged trade\n"
+    "/alerts <on|off|status> - proactive push when new arbs appear\n"
     "/status - show mode, max stake, and live-readiness"
 )
+
+
+def _alert_key(op: Opportunity) -> tuple:
+    return (op.market_id, op.kind)
+
+
+def format_alert(ops: list[Opportunity]) -> str:
+    lines = ["\U0001f514 New arbitrage:"]
+    for op in ops:
+        apr = "instant" if op.annualized_pct is None else f"{op.annualized_pct:.0f}% APR"
+        lines.append(
+            f"- {op.market_id} | {op.kind} | edge {op.edge_pct:.2f}% "
+            f"({apr}) | {op.question[:40]}"
+        )
+    lines.append("Use /execute <id> to stage (dry-run unless live).")
+    return "\n".join(lines)
 
 
 class ArbBot:
@@ -41,13 +58,18 @@ class ArbBot:
         executor: PolymarketExecutor,
         exec_config: ExecutionConfig,
         fee_model: Optional[FeeModel] = None,
+        min_alert_edge_pct: float = 0.0,
+        alerts_enabled: bool = True,
     ) -> None:
         self.owner_id = owner_id
         self.scan_fn = scan_fn
         self.executor = executor
         self.exec_config = exec_config
         self.fee_model = fee_model or FeeModel()
+        self.min_alert_edge_pct = min_alert_edge_pct
+        self.alerts_enabled = alerts_enabled
         self._pending: dict[int, OrderPlan] = {}
+        self._alert_seen: set = set()
 
     def is_authorized(self, chat_id: int) -> bool:
         return chat_id == self.owner_id
@@ -78,7 +100,41 @@ class ArbBot:
         if cmd == "/cancel":
             self._pending.pop(chat_id, None)
             return "Staged trade discarded."
+        if cmd == "/alerts":
+            return self._alerts(args)
         return f"Unknown command: {cmd}\n\n{HELP}"
+
+    def poll_alerts(self) -> Optional[str]:
+        """Scan and return a message for opportunities not seen on the last poll.
+
+        Returns None when alerts are off or nothing new cleared the threshold.
+        Disappeared-then-reappeared opportunities re-fire (the seen-set is reset
+        to whatever is currently live each poll).
+        """
+        if not self.alerts_enabled:
+            return None
+        ops = [
+            op for op in self.scan_fn() if op.edge_pct >= self.min_alert_edge_pct
+        ]
+        current = {_alert_key(op): op for op in ops}
+        new_keys = set(current) - self._alert_seen
+        self._alert_seen = set(current)
+        if not new_keys:
+            return None
+        new_ops = [current[k] for k in current if k in new_keys]
+        new_ops.sort(key=lambda o: o.edge_pct, reverse=True)
+        return format_alert(new_ops)
+
+    def _alerts(self, args: list[str]) -> str:
+        action = (args[0].lower() if args else "status")
+        if action == "on":
+            self.alerts_enabled = True
+            return "Alerts ON."
+        if action == "off":
+            self.alerts_enabled = False
+            return "Alerts OFF."
+        state = "ON" if self.alerts_enabled else "OFF"
+        return f"Alerts {state} | min edge {self.min_alert_edge_pct:.2f}%"
 
     # -- helpers ---------------------------------------------------------- #
 

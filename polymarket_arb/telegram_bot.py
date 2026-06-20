@@ -43,6 +43,8 @@ def build_bot() -> ArbBot:
         executor=executor,
         exec_config=config,
         fee_model=fee,
+        min_alert_edge_pct=float(os.environ.get("ALERT_MIN_EDGE_PCT", "0") or "0"),
+        alerts_enabled=(os.environ.get("ALERTS_ENABLED", "true").lower() != "false"),
     )
 
 
@@ -70,6 +72,25 @@ def main() -> None:
         await message.reply_text(reply)
 
     app.add_handler(MessageHandler(filters.TEXT, on_message))
+
+    # Proactive alerts: poll on an interval and push new arbs to the owner.
+    interval = float(os.environ.get("ALERT_INTERVAL_SEC", "300") or "300")
+
+    async def alert_job(context):  # pragma: no cover - requires Telegram + network
+        try:
+            message = bot.poll_alerts()
+        except Exception as exc:  # noqa: BLE001 - a scan failure shouldn't kill the job
+            print(f"alert poll failed: {exc}")
+            return
+        if message:
+            await context.bot.send_message(chat_id=bot.owner_id, text=message)
+
+    if app.job_queue is not None:
+        app.job_queue.run_repeating(alert_job, interval=interval, first=interval)
+    else:  # pragma: no cover
+        print("job-queue extra not installed; alerts disabled "
+              "(pip install 'python-telegram-bot[job-queue]').")
+
     print(f"Bot up. mode={bot.exec_config.mode}. Waiting for owner {bot.owner_id}.")
     app.run_polling()
 

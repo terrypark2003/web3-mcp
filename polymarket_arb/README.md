@@ -126,7 +126,12 @@ python -m polymarket_arb.telegram_bot
 
 Commands (owner-only — the bot ignores every chat except `TELEGRAM_OWNER_ID`):
 `/scan`, `/allocate <bankroll>`, `/plan <id>`, `/execute <id>` then `/confirm`,
-`/cancel`, `/status`.
+`/cancel`, `/alerts <on|off|status>`, `/status`.
+
+**Proactive alerts.** The bot polls every `ALERT_INTERVAL_SEC` and pushes a
+message when a *new* arbitrage appears (deduped; a vanished-then-reappeared
+edge re-fires). Filter with `ALERT_MIN_EDGE_PCT`; toggle live with `/alerts`.
+This is the dry-run + alerts workflow — it never places an order on its own.
 
 **Safety model — read before going live:**
 
