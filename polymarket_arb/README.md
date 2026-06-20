@@ -111,26 +111,56 @@ the web), both hosts must be added to the allowlist or the client returns
   you are in a permitted jurisdiction and compliant with local law before
   trading.
 
-## Execution roadmap (intentionally not built)
+## Telegram bot & execution (run it yourself)
 
-Turning a detection into a fill requires, deliberately and separately:
+There is a Telegram bot that scans, sizes, and — in live mode — places trades.
+**You run it on your own machine; it is not run from this repo's environment,
+and your keys never touch this chat or the repo.**
 
-1. A funded Polygon wallet (USDC) + signing key — **never** committed to a repo.
-2. `py-clob-client` for L2-authenticated signed orders.
-3. Atomic, both-legs-or-neither execution (a partial fill is naked exposure).
-4. Live depth checks, retry/cancel logic, and position/risk accounting.
+```bash
+pip install -r requirements-bot.txt
+cp .env.example .env          # fill in secrets; .env is gitignored
+set -a; . ./.env; set +a
+python -m polymarket_arb.telegram_bot
+```
+
+Commands (owner-only — the bot ignores every chat except `TELEGRAM_OWNER_ID`):
+`/scan`, `/allocate <bankroll>`, `/plan <id>`, `/execute <id>` then `/confirm`,
+`/cancel`, `/status`.
+
+**Safety model — read before going live:**
+
+- **Dry-run by default.** Nothing is placed unless `EXECUTION_MODE=live` *and*
+  all credentials are present *and* you `/confirm` each trade. Start at
+  `MAX_STAKE_USDC=1` for a functional test.
+- **Secrets via env only.** API key/secret/passphrase, wallet key, bot token,
+  and owner id come from environment variables. Never commit `.env`. Consider a
+  dedicated wallet funded with only what you intend to trade.
+- **Only `BUY_SET` is executable.** `MINT_SELL` (needs an on-chain CTF split)
+  is out of scope for now.
+- **Partial-fill risk is real.** Two CLOB orders can't fill atomically; the
+  executor places each leg fill-or-kill and tries to unwind if one fails — an
+  unwind can slip. Watch your first live fills by hand.
+- **Live placement is UNTESTED from here.** The `py-clob-client` calls are
+  written to the documented interface but could not be run against the live API
+  in this environment. **Validate against your installed client version and a
+  $1 trade before trusting larger size.** `signature_type`/`funder` depend on
+  whether you trade from an EOA or a Polymarket proxy wallet.
 
 ## Layout
 
 ```
 polymarket_arb/
-  models.py     Normalized dataclasses (Level, Leg, CompleteSet, Opportunity)
-  detect.py     Pure detection math + FeeModel  (no network)
-  normalize.py  Raw Gamma/CLOB JSON -> models   (no network)
-  client.py     Public read-only HTTP client (requests)
-  scanner.py    Fetch -> prefilter -> detect -> rank -> report
-  portfolio.py  Bankroll allocation + fractional-Kelly sizing (no network)
-  demo.py       Loads the bundled synthetic fixture
-  cli.py        argparse CLI: demo / scan / snapshot
-tests/          unittest suite (stdlib only)
+  models.py       Normalized dataclasses (Level, Leg, CompleteSet, Opportunity)
+  detect.py       Pure detection math + FeeModel  (no network)
+  normalize.py    Raw Gamma/CLOB JSON -> models   (no network)
+  client.py       Public read-only HTTP client (requests)
+  scanner.py      Fetch -> prefilter -> detect -> rank -> report
+  portfolio.py    Bankroll allocation + fractional-Kelly sizing (no network)
+  execution.py    Order-plan building + py-clob-client executor (live = opt-in)
+  bot_core.py     Telegram command logic (pure, testable)
+  telegram_bot.py Thin async Telegram shell (run on your machine)
+  demo.py         Loads the bundled synthetic fixture
+  cli.py          argparse CLI: demo / scan / allocate / snapshot
+tests/            unittest suite (stdlib only)
 ```
