@@ -32,6 +32,7 @@ class Leg:
     outcome: str                 # "Yes" / "No" or a candidate label
     best_ask: Optional[Level]    # lowest ask  -> price to BUY one share
     best_bid: Optional[Level]    # highest bid -> proceeds to SELL one share
+    venue: str = "polymarket"    # which exchange this leg trades on
 
 
 @dataclass
@@ -50,6 +51,7 @@ class CompleteSet:
     neg_risk: bool = False
     exhaustive: bool = True      # are the legs *known* to be collectively exhaustive?
     end_date: Optional[str] = None  # ISO-8601 resolution time, if known
+    venue: str = "polymarket"    # which exchange this set trades on
 
 
 @dataclass
