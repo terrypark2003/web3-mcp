@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from .crossvenue import CrossVenueOpportunity
 from .detect import FeeModel
+from .ev import EVOpportunity
 from .execution import (
     ExecutionConfig,
     OrderPlan,
@@ -22,8 +24,10 @@ from .models import ARB_BUY_SET, Opportunity
 from .portfolio import SizingConfig, allocate_portfolio, format_portfolio
 
 HELP = (
-    "Polymarket arbitrage bot (owner-only)\n"
-    "/scan - find current complete-set arbitrage\n"
+    "Prediction-market arbitrage bot (owner-only)\n"
+    "/scan - find Polymarket complete-set arbitrage\n"
+    "/cross - cross-venue arbitrage (Kalshi vs Polymarket)\n"
+    "/ev - positive-EV signals vs fair value (NOT risk-free)\n"
     "/allocate <bankroll> - size bets across the edges\n"
     "/plan <market_id> - show the order plan for one opportunity\n"
     "/execute <market_id> - stage a trade, then /confirm to place it\n"
@@ -35,19 +39,51 @@ HELP = (
 
 
 def _alert_key(op: Opportunity) -> tuple:
-    return (op.market_id, op.kind)
+    return ("poly", op.market_id, op.kind)
+
+
+def _cross_key(op: CrossVenueOpportunity) -> tuple:
+    return ("cross", op.event_id, op.yes_venue, op.no_venue)
+
+
+def format_poly_lines(ops: list[Opportunity]) -> list[str]:
+    out = []
+    for op in ops:
+        apr = "instant" if op.annualized_pct is None else f"{op.annualized_pct:.0f}% APR"
+        out.append(
+            f"- {op.market_id} | {op.kind} | edge {op.edge_pct:.2f}% "
+            f"({apr}) | {op.question[:40]}"
+        )
+    return out
 
 
 def format_alert(ops: list[Opportunity]) -> str:
     lines = ["\U0001f514 New arbitrage:"]
-    for op in ops:
-        apr = "instant" if op.annualized_pct is None else f"{op.annualized_pct:.0f}% APR"
-        lines.append(
-            f"- {op.market_id} | {op.kind} | edge {op.edge_pct:.2f}% "
-            f"({apr}) | {op.question[:40]}"
-        )
+    lines.extend(format_poly_lines(ops))
     lines.append("Use /execute <id> to stage (dry-run unless live).")
     return "\n".join(lines)
+
+
+def format_cross_lines(ops: list[CrossVenueOpportunity]) -> list[str]:
+    out = []
+    for op in ops:
+        out.append(
+            f"- {op.question[:38]} | edge {op.edge_pct:.2f}% (${op.total_edge:.0f}) "
+            f"| BUY YES@{op.yes_venue} {op.yes_price:.2f} + NO@{op.no_venue} "
+            f"{op.no_price:.2f}"
+        )
+    return out
+
+
+def format_ev_lines(ops: list[EVOpportunity]) -> list[str]:
+    out = []
+    for op in ops:
+        out.append(
+            f"- {op.question[:34]} | {op.side}@{op.venue} {op.price:.2f} "
+            f"vs fair {op.fair_prob:.2f} | EV {op.ev_per_contract:+.3f}/ct "
+            f"({op.edge_pct:.0f}%)"
+        )
+    return out
 
 
 class ArbBot:
@@ -60,6 +96,9 @@ class ArbBot:
         fee_model: Optional[FeeModel] = None,
         min_alert_edge_pct: float = 0.0,
         alerts_enabled: bool = True,
+        cross_scan_fn: Optional[Callable[[], list[CrossVenueOpportunity]]] = None,
+        ev_scan_fn: Optional[Callable[[], list[EVOpportunity]]] = None,
+        signal_channel_id: Optional[int] = None,
     ) -> None:
         self.owner_id = owner_id
         self.scan_fn = scan_fn
@@ -68,8 +107,12 @@ class ArbBot:
         self.fee_model = fee_model or FeeModel()
         self.min_alert_edge_pct = min_alert_edge_pct
         self.alerts_enabled = alerts_enabled
+        self.cross_scan_fn = cross_scan_fn
+        self.ev_scan_fn = ev_scan_fn
+        self.signal_channel_id = signal_channel_id
         self._pending: dict[int, OrderPlan] = {}
         self._alert_seen: set = set()
+        self._broadcast_seen: set = set()
 
     def is_authorized(self, chat_id: int) -> bool:
         return chat_id == self.owner_id
@@ -89,6 +132,10 @@ class ArbBot:
             return self._status()
         if cmd == "/scan":
             return self._scan()
+        if cmd == "/cross":
+            return self._cross()
+        if cmd == "/ev":
+            return self._ev()
         if cmd == "/allocate":
             return self._allocate(args)
         if cmd == "/plan":
@@ -124,6 +171,66 @@ class ArbBot:
         new_ops = [current[k] for k in current if k in new_keys]
         new_ops.sort(key=lambda o: o.edge_pct, reverse=True)
         return format_alert(new_ops)
+
+    def _cross(self) -> str:
+        if self.cross_scan_fn is None:
+            return "Cross-venue scanning is not configured on this bot."
+        ops = self.cross_scan_fn()
+        if not ops:
+            return "No cross-venue arbitrage right now."
+        lines = ["\U0001f501 Cross-venue arbitrage (risk-free only if both venues "
+                 "resolve identically):"]
+        lines.extend(format_cross_lines(ops))
+        return "\n".join(lines)
+
+    def _ev(self) -> str:
+        if self.ev_scan_fn is None:
+            return "EV scanning is not configured on this bot."
+        ops = self.ev_scan_fn()
+        if not ops:
+            return "No positive-EV signals right now."
+        lines = ["⚠️ Positive-EV signals (NOT risk-free — opinion vs "
+                 "fair value; size with care):"]
+        lines.extend(format_ev_lines(ops))
+        return "\n".join(lines)
+
+    def poll_broadcast(self) -> Optional[str]:
+        """Aggregate newly-appeared risk-free arbs for the signals channel.
+
+        Broadcasts Polymarket structural arbs and cross-venue arbs (the
+        guaranteed edges), deduped against the previous broadcast. EV is
+        intentionally excluded from the auto-feed — it's an opinion, available
+        on demand via /ev. Returns None when nothing new cleared.
+        """
+        poly_ops = [
+            op for op in self.scan_fn() if op.edge_pct >= self.min_alert_edge_pct
+        ]
+        cross_ops = list(self.cross_scan_fn()) if self.cross_scan_fn else []
+
+        current: dict[tuple, object] = {}
+        for op in poly_ops:
+            current[_alert_key(op)] = op
+        for op in cross_ops:
+            current[_cross_key(op)] = op
+
+        new_keys = set(current) - self._broadcast_seen
+        self._broadcast_seen = set(current)
+        if not new_keys:
+            return None
+
+        new_poly = [current[k] for k in new_keys if k[0] == "poly"]
+        new_cross = [current[k] for k in new_keys if k[0] == "cross"]
+        new_poly.sort(key=lambda o: o.edge_pct, reverse=True)
+        new_cross.sort(key=lambda o: o.total_edge, reverse=True)
+
+        lines = ["\U0001f4e2 New risk-free edges:"]
+        if new_poly:
+            lines.append("Polymarket:")
+            lines.extend(format_poly_lines(new_poly))
+        if new_cross:
+            lines.append("Cross-venue:")
+            lines.extend(format_cross_lines(new_cross))
+        return "\n".join(lines)
 
     def _alerts(self, args: list[str]) -> str:
         action = (args[0].lower() if args else "status")

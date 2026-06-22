@@ -1,12 +1,17 @@
-# Polymarket complete-set arbitrage scanner
+# Prediction-market arbitrage scanner (Polymarket + Kalshi)
 
-Finds **structural arbitrage** on Polymarket — cases where a market's
-mutually-exclusive, collectively-exhaustive outcomes are mispriced relative
-to their guaranteed $1 resolution payout.
+Finds three kinds of edge in prediction markets:
 
-> **Detection only.** Nothing here signs transactions, holds keys, or places
-> orders. It tells you *where* an edge exists; acting on it is a separate,
-> deliberate step (see [Execution roadmap](#execution-roadmap)).
+1. **Structural arbitrage on Polymarket** — a market's mutually-exclusive,
+   collectively-exhaustive outcomes mispriced vs their guaranteed $1 payout.
+2. **Cross-venue arbitrage** — the same event priced differently on Kalshi and
+   Polymarket, so buying `YES` on one and `NO` on the other locks a profit.
+3. **Positive-EV signals** — a market priced away from a fair-value estimate
+   you supply (an opinion, *not* risk-free).
+
+> **Detection by default.** The scanner only tells you *where* an edge is.
+> The optional Telegram bot can place Polymarket trades, but only as a
+> separate, opt-in, dry-run-by-default step (see the bot section).
 
 ## The idea
 
@@ -48,10 +53,43 @@ python -m polymarket_arb snapshot --out snap.json
 
 # Size a bankroll across the detected edges ("many small bets"):
 python -m polymarket_arb allocate --bankroll 1000 --per-market-cap 0.05
+
+# Cross-venue arbitrage between Kalshi and Polymarket (demo offline; --live for real):
+python -m polymarket_arb cross-venue
+
+# Positive-EV signals vs a fair-value estimate (NOT risk-free):
+python -m polymarket_arb ev
 ```
 
 Tunables (`scan`/`demo`): `--min-edge` (min net USDC/set), `--min-size` (min
 sets at top of book), `--fee-rate` (taker fee as a fraction of notional).
+
+## Cross-venue arbitrage & positive-EV (Kalshi + Polymarket)
+
+The same real-world event often trades on both **Kalshi** (CFTC-regulated, USD)
+and **Polymarket** (crypto). Two extra edges follow:
+
+| Mode | What it finds | Risk-free? |
+|------|---------------|------------|
+| **`cross-venue`** | Buy `YES` on the cheaper venue and `NO` on the other for `< $1` total → guaranteed $1 at resolution. | Yes — *if both venues resolve identically.* |
+| **`ev`** | A market priced away from a **fair-value** estimate you supply → positive expected value on one side. | **No.** An opinion, only as good as your number; any single bet can lose in full. |
+
+Two things make this honest rather than a mirage:
+
+- **Fees are modeled per venue.** Kalshi charges `ceil(0.07 · C · P · (1−P))`
+  per fill — near 50¢ that's ~1.75¢/contract, enough to erase most raw gaps.
+  The scanner applies it *before* reporting an edge (the demo's Fed pair is
+  filtered out for exactly this reason; the BTC pair survives at ~2.3¢/set).
+- **Pairs are human-curated, never fuzzy-matched.** Two markets can share a
+  headline yet resolve on different sources or cutoffs — which would turn a
+  "risk-free" pair into two uncorrelated bets. `fixtures/cross_venue_pairs.json`
+  is an explicit registry; a human asserts each pair co-resolves before it's
+  traded. **Resolution risk is the whole danger here — read both rulebooks.**
+
+For `ev --live`, supply `--fair-values file.json` (a `{market_id: P(YES)}`
+map). The fair-value source is pluggable: a model or data feed can replace the
+hand-entered map without touching the detector. Size EV bets with
+**fractional Kelly** (`portfolio.kelly_stake`), never flat.
 
 ## Sizing: making many small bets actually work
 
@@ -85,6 +123,7 @@ The live `scan`/`snapshot` commands talk to Polymarket's public APIs:
 
 - `gamma-api.polymarket.com` — market metadata and `/events` (candidate groups)
 - `clob.polymarket.com` — order books
+- `api.elections.kalshi.com` — Kalshi public market data (for `cross-venue`)
 
 In a sandboxed environment with an **egress allowlist** (e.g. Claude Code on
 the web), both hosts must be added to the allowlist or the client returns
@@ -125,13 +164,19 @@ python -m polymarket_arb.telegram_bot
 ```
 
 Commands (owner-only — the bot ignores every chat except `TELEGRAM_OWNER_ID`):
-`/scan`, `/allocate <bankroll>`, `/plan <id>`, `/execute <id>` then `/confirm`,
-`/cancel`, `/alerts <on|off|status>`, `/status`.
+`/scan`, `/cross`, `/ev`, `/allocate <bankroll>`, `/plan <id>`, `/execute <id>`
+then `/confirm`, `/cancel`, `/alerts <on|off|status>`, `/status`.
 
 **Proactive alerts.** The bot polls every `ALERT_INTERVAL_SEC` and pushes a
 message when a *new* arbitrage appears (deduped; a vanished-then-reappeared
 edge re-fires). Filter with `ALERT_MIN_EDGE_PCT`; toggle live with `/alerts`.
 This is the dry-run + alerts workflow — it never places an order on its own.
+
+**Signals channel (broadcaster).** Set `SIGNAL_CHANNEL_ID` and the bot also
+broadcasts newly-appeared **risk-free** edges (Polymarket structural + the
+cross-venue arbs) to that channel on the same interval — a Polytrage-style
+feed. Positive-EV is deliberately kept *out* of the auto-feed (it's an opinion)
+and stays on-demand via `/ev`. Set `FAIR_VALUES_FILE` to enable `/ev` live.
 
 **Safety model — read before going live:**
 
@@ -156,16 +201,23 @@ This is the dry-run + alerts workflow — it never places an order on its own.
 
 ```
 polymarket_arb/
-  models.py       Normalized dataclasses (Level, Leg, CompleteSet, Opportunity)
-  detect.py       Pure detection math + FeeModel  (no network)
-  normalize.py    Raw Gamma/CLOB JSON -> models   (no network)
-  client.py       Public read-only HTTP client (requests)
-  scanner.py      Fetch -> prefilter -> detect -> rank -> report
-  portfolio.py    Bankroll allocation + fractional-Kelly sizing (no network)
-  execution.py    Order-plan building + py-clob-client executor (live = opt-in)
-  bot_core.py     Telegram command logic (pure, testable)
-  telegram_bot.py Thin async Telegram shell (run on your machine)
-  demo.py         Loads the bundled synthetic fixture
-  cli.py          argparse CLI: demo / scan / allocate / snapshot
-tests/            unittest suite (stdlib only)
+  models.py          Normalized dataclasses (Level, Leg, CompleteSet, Opportunity)
+  detect.py          Pure Polymarket detection math + FeeModel  (no network)
+  normalize.py       Raw Gamma/CLOB JSON -> models   (no network)
+  client.py          Public read-only Polymarket HTTP client (requests)
+  scanner.py         Fetch -> prefilter -> detect -> rank -> report
+  venues.py          Per-venue fee models (Kalshi schedule, Polymarket)  (no network)
+  crossvenue.py      Cross-venue arbitrage detection (no network)
+  ev.py              Positive-EV finder vs a pluggable fair-value source (no network)
+  kalshi_normalize.py Raw Kalshi JSON -> models   (no network)
+  kalshi_client.py   Public read-only Kalshi HTTP client (requests)
+  matching.py        Curated cross-venue pair registry (no network)
+  multivenue.py      Live cross-venue + EV orchestration
+  portfolio.py       Bankroll allocation + fractional-Kelly sizing (no network)
+  execution.py       Order-plan building + py-clob-client executor (live = opt-in)
+  bot_core.py        Telegram command logic + alerts + broadcaster (pure, testable)
+  telegram_bot.py    Thin async Telegram shell (run on your machine)
+  demo.py            Loads the bundled synthetic fixtures
+  cli.py             argparse CLI: demo / scan / allocate / cross-venue / ev / snapshot
+tests/               unittest suite (stdlib only)
 ```

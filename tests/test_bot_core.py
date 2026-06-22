@@ -109,6 +109,99 @@ class TestCommands(unittest.TestCase):
         self.assertIn("missing creds", out)
 
 
+def cross_op(event_id="btc", edge_pct=2.35, total_edge=18.0):
+    from polymarket_arb.crossvenue import ARB_CROSS_VENUE, CrossVenueOpportunity
+
+    return CrossVenueOpportunity(
+        kind=ARB_CROSS_VENUE, event_id=event_id, question="BTC > 100k?",
+        end_date=None, yes_venue="polymarket", no_venue="kalshi",
+        yes_price=0.49, no_price=0.47, cost_per_set=0.96, fee_per_set=0.0174,
+        edge_per_set=0.0226, edge_pct=edge_pct, max_sets=800,
+        capital_required=768.0, total_edge=total_edge, annualized_pct=None,
+    )
+
+
+def ev_op(market_id="m", side="YES"):
+    from polymarket_arb.ev import EV_SIGNAL, EVOpportunity
+
+    return EVOpportunity(
+        kind=EV_SIGNAL, market_id=market_id, question="BTC > 100k?",
+        venue="polymarket", side=side, price=0.49, fair_prob=0.62,
+        ev_per_contract=0.13, edge_pct=26.5, max_size=1000, end_date=None,
+    )
+
+
+def make_multi_bot(poly_ops=None, cross_ops=None, ev_ops=None, channel=None):
+    cfg = ExecutionConfig.from_env({})
+    return ArbBot(
+        owner_id=OWNER,
+        scan_fn=lambda: poly_ops or [],
+        executor=PolymarketExecutor(cfg),
+        exec_config=cfg,
+        cross_scan_fn=(lambda: cross_ops) if cross_ops is not None else None,
+        ev_scan_fn=(lambda: ev_ops) if ev_ops is not None else None,
+        signal_channel_id=channel,
+    )
+
+
+class TestMultiVenueCommands(unittest.TestCase):
+    def test_cross_lists_opportunities(self):
+        bot = make_multi_bot(cross_ops=[cross_op("btc")])
+        out = bot.handle(OWNER, "/cross")
+        self.assertIn("BTC", out)
+        self.assertIn("YES@polymarket", out)
+        self.assertIn("NO@kalshi", out)
+
+    def test_cross_not_configured(self):
+        bot = make_multi_bot()
+        self.assertIn("not configured", bot.handle(OWNER, "/cross"))
+
+    def test_cross_empty(self):
+        bot = make_multi_bot(cross_ops=[])
+        self.assertIn("No cross-venue", bot.handle(OWNER, "/cross"))
+
+    def test_ev_lists_and_warns_not_risk_free(self):
+        bot = make_multi_bot(ev_ops=[ev_op("m")])
+        out = bot.handle(OWNER, "/ev")
+        self.assertIn("NOT risk-free", out)
+        self.assertIn("YES@polymarket", out)
+
+    def test_ev_not_configured(self):
+        bot = make_multi_bot()
+        self.assertIn("not configured", bot.handle(OWNER, "/ev"))
+
+    def test_help_lists_new_commands(self):
+        bot = make_multi_bot()
+        out = bot.handle(OWNER, "/help")
+        self.assertIn("/cross", out)
+        self.assertIn("/ev", out)
+
+
+class TestBroadcast(unittest.TestCase):
+    def test_aggregates_poly_and_cross_then_dedups(self):
+        bot = make_multi_bot(poly_ops=[buy_set_op("p1")], cross_ops=[cross_op("c1")])
+        first = bot.poll_broadcast()
+        self.assertIsNotNone(first)
+        self.assertIn("p1", first)
+        self.assertIn("Cross-venue", first)
+        self.assertIsNone(bot.poll_broadcast())  # nothing new second time
+
+    def test_excludes_ev_from_autofeed(self):
+        # EV configured, but poll_broadcast must not surface EV signals.
+        bot = make_multi_bot(cross_ops=[cross_op("c1")], ev_ops=[ev_op("m")])
+        out = bot.poll_broadcast()
+        self.assertNotIn("fair", out)  # EV lines mention 'fair'; arbs don't
+
+    def test_new_cross_fires_after_first(self):
+        ops = [cross_op("c1")]
+        bot = make_multi_bot(cross_ops=ops)
+        bot.poll_broadcast()
+        ops.append(cross_op("c2"))
+        out = bot.poll_broadcast()
+        self.assertIsNotNone(out)
+        self.assertIn("Cross-venue", out)
+
+
 class TestAlerts(unittest.TestCase):
     def test_first_poll_fires_then_dedups(self):
         op = buy_set_op("abc")

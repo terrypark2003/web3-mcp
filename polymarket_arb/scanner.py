@@ -161,3 +161,47 @@ def format_table(opportunities: list[Opportunity]) -> str:
 def write_json(opportunities: list[Opportunity], path: str) -> None:
     with open(path, "w", encoding="utf-8") as fh:
         json.dump([opportunity_to_dict(op) for op in opportunities], fh, indent=2)
+
+
+def format_cross_table(opportunities) -> str:
+    """Render cross-venue opportunities (see crossvenue.CrossVenueOpportunity)."""
+    if not opportunities:
+        return "No cross-venue arbitrage found above thresholds."
+    header = (
+        f"{'EDGE/SET':>9} {'EDGE%':>7} {'FEE/SET':>8} {'MAX$':>9} {'TOT$':>8}  "
+        f"BUY YES / BUY NO   QUESTION"
+    )
+    lines = [header, "-" * len(header)]
+    for op in opportunities:
+        q = op.question if len(op.question) <= 36 else op.question[:33] + "..."
+        lines.append(
+            f"{op.edge_per_set:>9.4f} {op.edge_pct:>6.2f}% {op.fee_per_set:>8.4f} "
+            f"{op.capital_required:>9.2f} {op.total_edge:>8.2f}  "
+            f"YES@{op.yes_venue[:4]} {op.yes_price:.2f}/NO@{op.no_venue[:4]} "
+            f"{op.no_price:.2f}  {q}"
+        )
+    lines.append(
+        "\nRisk-free ONLY if both venues resolve identically (same source/cutoff). "
+        "Fees are modeled; confirm depth + rulebooks before sizing."
+    )
+    return "\n".join(lines)
+
+
+def format_ev_table(opportunities) -> str:
+    """Render positive-EV signals (see ev.EVOpportunity). NOT risk-free."""
+    if not opportunities:
+        return "No positive-EV signals above threshold."
+    header = f"{'EV/CT':>7} {'EDGE%':>7} {'PRICE':>6} {'FAIR':>6} {'MAX':>7}  SIDE VENUE   QUESTION"
+    lines = [header, "-" * len(header)]
+    for op in opportunities:
+        q = op.question if len(op.question) <= 34 else op.question[:31] + "..."
+        lines.append(
+            f"{op.ev_per_contract:>7.3f} {op.edge_pct:>6.1f}% {op.price:>6.2f} "
+            f"{op.fair_prob:>6.2f} {op.max_size:>7.0f}  {op.side:<4} "
+            f"{op.venue[:6]:<6}  {q}"
+        )
+    lines.append(
+        "\nNOT risk-free: EV is only as good as the fair-value estimate, and any "
+        "single bet can lose in full. Sizing should reflect that (e.g. Kelly)."
+    )
+    return "\n".join(lines)

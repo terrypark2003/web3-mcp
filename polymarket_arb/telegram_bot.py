@@ -37,6 +37,33 @@ def build_bot() -> ArbBot:
 
         return scan_live(PolymarketClient(), fee)
 
+    def cross_scan_fn():
+        from .client import PolymarketClient
+        from .kalshi_client import KalshiClient
+        from .multivenue import scan_cross_venue_live
+
+        return scan_cross_venue_live(KalshiClient(), PolymarketClient())
+
+    # EV scanning needs a fair-value source; only enable it if one is supplied.
+    ev_scan_fn = None
+    fair_path = os.environ.get("FAIR_VALUES_FILE")
+    if fair_path:
+        def ev_scan_fn():  # noqa: F811 - conditional definition is intentional
+            import json
+
+            from .client import PolymarketClient
+            from .ev import fair_value_from_map
+            from .multivenue import scan_ev_live
+
+            with open(fair_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            probs = data.get("fair_values", data)
+            fair = fair_value_from_map({k: float(v) for k, v in probs.items()})
+            return scan_ev_live(PolymarketClient(), fair)
+
+    channel_raw = os.environ.get("SIGNAL_CHANNEL_ID")
+    signal_channel_id = int(channel_raw) if channel_raw else None
+
     return ArbBot(
         owner_id=owner_id,
         scan_fn=scan_fn,
@@ -45,6 +72,9 @@ def build_bot() -> ArbBot:
         fee_model=fee,
         min_alert_edge_pct=float(os.environ.get("ALERT_MIN_EDGE_PCT", "0") or "0"),
         alerts_enabled=(os.environ.get("ALERTS_ENABLED", "true").lower() != "false"),
+        cross_scan_fn=cross_scan_fn,
+        ev_scan_fn=ev_scan_fn,
+        signal_channel_id=signal_channel_id,
     )
 
 
@@ -85,8 +115,22 @@ def main() -> None:
         if message:
             await context.bot.send_message(chat_id=bot.owner_id, text=message)
 
+    async def broadcast_job(context):  # pragma: no cover - requires Telegram + network
+        try:
+            message = bot.poll_broadcast()
+        except Exception as exc:  # noqa: BLE001 - a scan failure shouldn't kill the job
+            print(f"broadcast poll failed: {exc}")
+            return
+        if message and bot.signal_channel_id is not None:
+            await context.bot.send_message(chat_id=bot.signal_channel_id, text=message)
+
     if app.job_queue is not None:
         app.job_queue.run_repeating(alert_job, interval=interval, first=interval)
+        if bot.signal_channel_id is not None:
+            app.job_queue.run_repeating(
+                broadcast_job, interval=interval, first=interval
+            )
+            print(f"Broadcasting risk-free edges to channel {bot.signal_channel_id}.")
     else:  # pragma: no cover
         print("job-queue extra not installed; alerts disabled "
               "(pip install 'python-telegram-bot[job-queue]').")
