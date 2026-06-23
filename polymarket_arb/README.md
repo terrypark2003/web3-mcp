@@ -197,6 +197,43 @@ and stays on-demand via `/ev`. Set `FAIR_VALUES_FILE` to enable `/ev` live.
   $1 trade before trusting larger size.** `signature_type`/`funder` depend on
   whether you trade from an EOA or a Polymarket proxy wallet.
 
+## Web dashboard (browser UI with execution)
+
+A FastAPI dashboard shows all three feeds in the browser with auto-refresh and
+lets you place Polymarket `BUY_SET` trades through the **same** stage→confirm,
+dry-run-by-default flow as the bot. **You run it on your own machine.**
+
+```bash
+pip install -r requirements-web.txt    # plus requirements-bot.txt for live trading
+# Try it offline first, no keys or network — bundled demo data:
+DASHBOARD_TOKEN=test WEB_DEMO=1 python -m polymarket_arb.webapp
+# -> open http://127.0.0.1:8000 and paste the token to connect
+
+# Real data / trading: fill .env (DASHBOARD_TOKEN + the execution secrets), then:
+set -a; . ./.env; set +a
+python -m polymarket_arb.webapp
+```
+
+The browser stages a trade → a modal shows the **exact** order plan and the
+dry-run preview → you Confirm. In live mode the modal turns red and says
+"PLACE LIVE"; nothing is placed in a single click.
+
+**Security model — this UI can move real money:**
+
+- **Token on every request.** All `/api/*` calls require `X-Dashboard-Token` to
+  match `DASHBOARD_TOKEN`; without that env var the service refuses everything.
+- **Localhost by default.** Binds to `127.0.0.1`. `WEB_HOST=0.0.0.0` exposes a
+  trading UI to your network — only with a strong token and trusted access, 
+  ideally behind a VPN/reverse-proxy with TLS. There is no multi-user auth.
+- **Dry-run by default.** Live placement needs `EXECUTION_MODE=live` + full
+  credentials *and* a per-trade confirm, exactly like the bot. Start at
+  `MAX_STAKE_USDC=1`.
+- **Same execution caveats** as the bot apply (only `BUY_SET`, non-atomic
+  fills, `py-clob-client` calls unrun from this repo — validate with $1 first).
+
+The dashboard logic lives in `web_core.py` (pure, unit-tested); `webapp.py` is
+just the HTTP/auth wiring and is best validated by running it locally.
+
 ## Layout
 
 ```
@@ -217,6 +254,9 @@ polymarket_arb/
   execution.py       Order-plan building + py-clob-client executor (live = opt-in)
   bot_core.py        Telegram command logic + alerts + broadcaster (pure, testable)
   telegram_bot.py    Thin async Telegram shell (run on your machine)
+  web_core.py        Dashboard service: auth + stage/confirm (pure, testable)
+  webapp.py          Thin FastAPI shell + static serving (run on your machine)
+  web/index.html     Single-file dashboard UI (vanilla JS, no build step)
   demo.py            Loads the bundled synthetic fixtures
   cli.py             argparse CLI: demo / scan / allocate / cross-venue / ev / snapshot
 tests/               unittest suite (stdlib only)

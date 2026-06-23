@@ -163,6 +163,45 @@ def write_json(opportunities: list[Opportunity], path: str) -> None:
         json.dump([opportunity_to_dict(op) for op in opportunities], fh, indent=2)
 
 
+def cross_to_dict(op) -> dict:
+    """Serialize a crossvenue.CrossVenueOpportunity for JSON / the web API."""
+    return {
+        "kind": op.kind,
+        "event_id": op.event_id,
+        "question": op.question,
+        "end_date": op.end_date,
+        "yes_venue": op.yes_venue,
+        "no_venue": op.no_venue,
+        "yes_price": round(op.yes_price, 4),
+        "no_price": round(op.no_price, 4),
+        "cost_per_set": round(op.cost_per_set, 4),
+        "fee_per_set": round(op.fee_per_set, 4),
+        "edge_per_set": round(op.edge_per_set, 4),
+        "edge_pct": round(op.edge_pct, 2),
+        "max_sets": round(op.max_sets, 2),
+        "capital_required": round(op.capital_required, 2),
+        "total_edge": round(op.total_edge, 2),
+        "annualized_pct": None if op.annualized_pct is None else round(op.annualized_pct, 1),
+    }
+
+
+def ev_to_dict(op) -> dict:
+    """Serialize an ev.EVOpportunity for JSON / the web API."""
+    return {
+        "kind": op.kind,
+        "market_id": op.market_id,
+        "question": op.question,
+        "venue": op.venue,
+        "side": op.side,
+        "price": round(op.price, 4),
+        "fair_prob": round(op.fair_prob, 4),
+        "ev_per_contract": round(op.ev_per_contract, 4),
+        "edge_pct": round(op.edge_pct, 2),
+        "max_size": round(op.max_size, 2),
+        "end_date": op.end_date,
+    }
+
+
 def format_cross_table(opportunities) -> str:
     """Render cross-venue opportunities (see crossvenue.CrossVenueOpportunity)."""
     if not opportunities:
