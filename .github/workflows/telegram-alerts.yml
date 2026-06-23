@@ -1,0 +1,53 @@
+name: Telegram arbitrage alerts
+
+# Scans on a schedule and pushes NEW risk-free edges to Telegram.
+# NOTE: scheduled runs only fire when this file is on the repository's DEFAULT
+# branch (merge the PR to main to activate the schedule). Use the "Run workflow"
+# button (workflow_dispatch) to test from any branch.
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 min (GitHub may delay/skip under load)
+  workflow_dispatch:
+    inputs:
+      demo:
+        description: "Send a labelled DEMO test message (verifies the wiring)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Don't let two runs race on the dedup state.
+concurrency:
+  group: telegram-alerts
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      # Persist the "already alerted" state between runs so we only send NEW edges.
+      - name: Restore alert state
+        uses: actions/cache@v4
+        with:
+          path: notify_state.json
+          key: telegram-alert-state-${{ github.run_id }}
+          restore-keys: |
+            telegram-alert-state-
+
+      - name: Scan and notify
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NOTIFY_DEMO: ${{ (github.event_name == 'workflow_dispatch' && inputs.demo) && '1' || '' }}
+          NOTIFY_MIN_EDGE_PCT: "0"
+          NOTIFY_INCLUDE_EV: ""
+        run: python -m polymarket_arb.notify

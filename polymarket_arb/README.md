@@ -256,6 +256,31 @@ serverless time budget, and falls back to demo data (flagged in `meta`) if the
 scan fails or times out. The serverless model also means the live structural
 scan is capped and best-effort; the local app is the source of truth.
 
+## Scheduled Telegram alerts (no server to keep on)
+
+`polymarket_arb.notify` is a one-shot scan-and-send pass: it scans, diffs
+against the previous run, and pushes only *new* risk-free edges to a Telegram
+chat via the Bot API (a plain HTTPS POST — no extra dependency). A bundled
+GitHub Action (`.github/workflows/telegram-alerts.yml`) runs it on a schedule,
+so you get alerts in the cloud without keeping a machine on.
+
+Setup:
+
+1. Create a bot with **@BotFather**, copy the token.
+2. Get your numeric chat id: message your bot, then open
+   `https://api.telegram.org/bot<token>/getUpdates` and read `chat.id`
+   (or message **@userinfobot**).
+3. In the repo: **Settings → Secrets and variables → Actions** → add
+   `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+4. **The schedule only runs when the workflow is on the default branch** — merge
+   to `main` to activate it. Use the *Run workflow* button (with the **demo**
+   box ticked) to send a labelled test message from any branch first.
+
+Dedup state is persisted between runs via the Actions cache, so you aren't
+re-pinged about the same edge; a vanished-then-reappeared edge re-fires. EV is
+off by default (`NOTIFY_INCLUDE_EV=1` to include it). The notifier never sends
+demo data as a real alert — if a live scan fails it sends nothing.
+
 ## Layout
 
 ```
@@ -276,6 +301,7 @@ polymarket_arb/
   execution.py       Order-plan building + py-clob-client executor (live = opt-in)
   bot_core.py        Telegram command logic + alerts + broadcaster (pure, testable)
   telegram_bot.py    Thin async Telegram shell (run on your machine)
+  notify.py          One-shot Telegram notifier for cron/CI (pure dedup + send)
   web_core.py        Dashboard service: auth + stage/confirm (pure, testable)
   webapp.py          Thin FastAPI shell + static serving (run on your machine)
   web/index.html     Single-file dashboard UI (vanilla JS, no build step)
