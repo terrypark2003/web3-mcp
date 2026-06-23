@@ -6,7 +6,7 @@ name: Telegram arbitrage alerts
 # button (workflow_dispatch) to test from any branch.
 on:
   schedule:
-    - cron: "*/30 * * * *"   # every 30 min (GitHub may delay/skip under load)
+    - cron: "*/15 * * * *"   # every 15 min (GitHub may delay/skip under load)
   workflow_dispatch:
     inputs:
       demo:
