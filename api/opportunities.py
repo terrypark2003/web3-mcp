@@ -25,7 +25,13 @@ from polymarket_arb.webapp import read_only_payload  # noqa: E402
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802 - Vercel's expected handler name
         live = os.environ.get("LIVE_SCAN", "").lower() in ("1", "true", "yes")
-        payload = read_only_payload(live)  # never raises; falls back to demo
+        try:
+            payload = read_only_payload(live)  # falls back to demo internally
+        except Exception as exc:  # last-resort guard: always return valid JSON
+            payload = {
+                "polymarket": [], "cross_venue": [], "ev": [],
+                "meta": {"source": "error", "error": str(exc)[:200]},
+            }
         body = json.dumps(payload).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

@@ -1,9 +1,15 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": {
-    "api/opportunities.py": {
-      "maxDuration": 30,
-      "includeFiles": "polymarket_arb/**"
-    }
-  }
+  "builds": [
+    {
+      "src": "api/opportunities.py",
+      "use": "@vercel/python",
+      "config": { "includeFiles": "polymarket_arb/**" }
+    },
+    { "src": "public/**", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/api/opportunities", "dest": "api/opportunities.py" },
+    { "src": "/", "dest": "public/index.html" },
+    { "src": "/(.*)", "dest": "public/$1" }
+  ]
 }
