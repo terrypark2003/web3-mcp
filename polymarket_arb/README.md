@@ -275,6 +275,24 @@ The value math reuses the EV engine (`ev.py`); `sports_value.py` only turns
 bookmaker odds into a fair-probability-per-team map and matches teams to the
 "Will <team> win?" markets.
 
+## Gemini: a plain-language analyst (not the oracle)
+
+Gemini is wired in as an **explanation / query layer over the real numbers** —
+it never decides probabilities. (An LLM hallucinates win probabilities; betting
+against the market on an invented number loses money. The de-vigged bookmaker
+consensus is the benchmark; Gemini only reads it.)
+
+- **`/ask <question>`** in the bot: gathers the current signals (arb, cross-venue,
+  EV, World Cup value), passes the real prices + consensus + edges to Gemini, and
+  replies in plain language. Gemini is instructed to use only the supplied numbers,
+  never invent odds, and flag that it's not risk-free / not advice.
+- **Alert enrichment**: set `GEMINI_ENRICH=1` and a one-line Gemini context note is
+  appended to alert messages (best-effort; never blocks the alert).
+
+Needs `GEMINI_API_KEY` (Google AI Studio); `GEMINI_MODEL` defaults to
+`gemini-2.0-flash`. The prompt builders in `gemini.py` are tested; the REST call
+is unrun here — validate with your key.
+
 ## Scheduled Telegram alerts (no server to keep on)
 
 `polymarket_arb.notify` is a one-shot scan-and-send pass: it scans, diffs

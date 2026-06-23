@@ -181,6 +181,29 @@ def build_world_cup_payload(demo: bool = False) -> dict:
     return payload
 
 
+def maybe_gemini_note(payload: dict) -> Optional[str]:
+    """One cautious Gemini line about the current signals, or None.
+
+    Gated on GEMINI_ENRICH + GEMINI_API_KEY. Never raises — enrichment must not
+    break an alert, and Gemini is commentary only, not the value judgement.
+    """
+    if os.environ.get("GEMINI_ENRICH", "").lower() not in ("1", "true", "yes"):
+        return None
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        return None
+    try:
+        from .gemini import NOTE_SYSTEM, GeminiClient, build_signal_context
+
+        context = build_signal_context(payload)
+        note = GeminiClient(key).generate(
+            f"Data:\n{context}\n\nWrite one short cautious context line.", NOTE_SYSTEM
+        )
+        return note.strip() or None
+    except Exception:  # noqa: BLE001 - enrichment is best-effort
+        return None
+
+
 def send_telegram(token: str, chat_id: str, text: str) -> None:  # pragma: no cover - network
     import requests
 
@@ -227,6 +250,9 @@ def main() -> int:  # pragma: no cover - orchestration, exercised via the workfl
     if text is None:
         print("No new opportunities since last run.")
         return 0
+    note = maybe_gemini_note(payload)
+    if note:
+        text += f"\n\n\U0001f916 Gemini: {note}"
     if demo:
         text = "[DEMO TEST — not real data]\n" + text
     send_telegram(token, chat_id, text)
