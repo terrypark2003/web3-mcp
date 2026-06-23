@@ -64,6 +64,25 @@ def build_bot() -> ArbBot:
     channel_raw = os.environ.get("SIGNAL_CHANNEL_ID")
     signal_channel_id = int(channel_raw) if channel_raw else None
 
+    # World Cup value scan for /ask context (needs the odds API).
+    wc_scan_fn = None
+    odds_key = os.environ.get("ODDS_API_KEY")
+    if odds_key:
+        def wc_scan_fn():  # noqa: F811 - conditional definition is intentional
+            from .client import PolymarketClient
+            from .multivenue import scan_world_cup_value_live
+            from .odds_api import OddsApiClient
+
+            return scan_world_cup_value_live(PolymarketClient(), OddsApiClient(odds_key))
+
+    # Gemini = plain-language analyst over the real signals (never the oracle).
+    gemini_generate = None
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if gemini_key:
+        from .gemini import GeminiClient
+
+        gemini_generate = GeminiClient(gemini_key).generate
+
     return ArbBot(
         owner_id=owner_id,
         scan_fn=scan_fn,
@@ -75,6 +94,8 @@ def build_bot() -> ArbBot:
         cross_scan_fn=cross_scan_fn,
         ev_scan_fn=ev_scan_fn,
         signal_channel_id=signal_channel_id,
+        wc_scan_fn=wc_scan_fn,
+        gemini_generate=gemini_generate,
     )
 
 

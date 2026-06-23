@@ -22,12 +22,14 @@ from .execution import (
 )
 from .models import ARB_BUY_SET, Opportunity
 from .portfolio import SizingConfig, allocate_portfolio, format_portfolio
+from .scanner import cross_to_dict, ev_to_dict, opportunity_to_dict
 
 HELP = (
     "Prediction-market arbitrage bot (owner-only)\n"
     "/scan - find Polymarket complete-set arbitrage\n"
     "/cross - cross-venue arbitrage (Kalshi vs Polymarket)\n"
     "/ev - positive-EV signals vs fair value (NOT risk-free)\n"
+    "/ask <question> - ask Gemini about the current signals (plain-language)\n"
     "/allocate <bankroll> - size bets across the edges\n"
     "/plan <market_id> - show the order plan for one opportunity\n"
     "/execute <market_id> - stage a trade, then /confirm to place it\n"
@@ -99,6 +101,8 @@ class ArbBot:
         cross_scan_fn: Optional[Callable[[], list[CrossVenueOpportunity]]] = None,
         ev_scan_fn: Optional[Callable[[], list[EVOpportunity]]] = None,
         signal_channel_id: Optional[int] = None,
+        wc_scan_fn: Optional[Callable[[], list[EVOpportunity]]] = None,
+        gemini_generate: Optional[Callable[[str, Optional[str]], str]] = None,
     ) -> None:
         self.owner_id = owner_id
         self.scan_fn = scan_fn
@@ -110,6 +114,8 @@ class ArbBot:
         self.cross_scan_fn = cross_scan_fn
         self.ev_scan_fn = ev_scan_fn
         self.signal_channel_id = signal_channel_id
+        self.wc_scan_fn = wc_scan_fn
+        self.gemini_generate = gemini_generate
         self._pending: dict[int, OrderPlan] = {}
         self._alert_seen: set = set()
         self._broadcast_seen: set = set()
@@ -136,6 +142,8 @@ class ArbBot:
             return self._cross()
         if cmd == "/ev":
             return self._ev()
+        if cmd == "/ask":
+            return self._ask(args)
         if cmd == "/allocate":
             return self._allocate(args)
         if cmd == "/plan":
@@ -193,6 +201,33 @@ class ArbBot:
                  "fair value; size with care):"]
         lines.extend(format_ev_lines(ops))
         return "\n".join(lines)
+
+    def _gather_payload(self) -> dict:
+        """Serialize all currently-available signals for Gemini context."""
+        cross = list(self.cross_scan_fn()) if self.cross_scan_fn else []
+        ev = list(self.ev_scan_fn()) if self.ev_scan_fn else []
+        wc = list(self.wc_scan_fn()) if self.wc_scan_fn else []
+        return {
+            "polymarket": [opportunity_to_dict(o) for o in self.scan_fn()],
+            "cross_venue": [cross_to_dict(o) for o in cross],
+            "ev": [ev_to_dict(o) for o in ev],
+            "world_cup": [ev_to_dict(o) for o in wc],
+        }
+
+    def _ask(self, args: list[str]) -> str:
+        if self.gemini_generate is None:
+            return "Gemini is not configured (set GEMINI_API_KEY)."
+        question = " ".join(args).strip()
+        if not question:
+            return "Usage: /ask <question>"
+        from .gemini import ASK_SYSTEM, build_signal_context
+
+        context = build_signal_context(self._gather_payload())
+        user = f"Current data:\n{context}\n\nQuestion: {question}"
+        try:
+            return self.gemini_generate(user, ASK_SYSTEM)
+        except Exception as exc:  # noqa: BLE001 - surface API errors to the chat
+            return f"Gemini error: {exc}"
 
     def poll_broadcast(self) -> Optional[str]:
         """Aggregate newly-appeared risk-free arbs for the signals channel.

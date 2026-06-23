@@ -72,6 +72,37 @@ def scan_cross_venue_live(
     return scan_cross_venue(matched, fees, min_edge_per_set, min_size)
 
 
+def scan_world_cup_value_live(
+    poly_client,
+    odds_client,
+    min_edge: float = 0.03,
+    min_size: float = 1.0,
+) -> list[EVOpportunity]:
+    """Live World Cup value: Polymarket outright markets vs bookmaker consensus.
+
+    Fetches only World Cup markets (by question keyword) and their books, plus
+    the bookmaker outright odds, then runs the consensus value detector.
+    """
+    from .normalize import complete_set_from_market
+    from .sports_value import is_world_cup_market, scan_world_cup_value
+
+    markets = [
+        m for m in poly_client.active_markets()
+        if is_world_cup_market(str(m.get("question", "")))
+    ]
+    token_ids: list[str] = []
+    for market in markets:
+        token_ids.extend(str(t) for t in _maybe_json_list(market.get("clobTokenIds")))
+    books = poly_client.order_books(token_ids)
+    sets = [
+        cs for cs in (complete_set_from_market(m, books) for m in markets)
+        if cs is not None
+    ]
+
+    prices = odds_client.world_cup_winner_prices()
+    return scan_world_cup_value(sets, prices, min_edge=min_edge, min_size=min_size)
+
+
 def scan_ev_live(
     poly_client,
     fair: FairValue,
