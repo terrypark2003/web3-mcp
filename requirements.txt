@@ -1,0 +1,3 @@
+# Runtime dependency for the live scanner (scan / snapshot commands).
+# The `demo` command and the test suite need only the Python standard library.
+requests>=2.28

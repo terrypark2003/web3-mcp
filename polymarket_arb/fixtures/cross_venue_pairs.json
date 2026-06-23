@@ -1,0 +1,19 @@
+{
+  "_comment": "Curated cross-venue pairs. Each entry ASSERTS that the two market ids resolve identically (same question, source, cutoff). A human must verify both rulebooks before adding a pair — see matching.py.",
+  "pairs": [
+    {
+      "event_id": "btc-100k-2026",
+      "question": "Will BTC close above $100k at end of 2026?",
+      "kalshi_ticker": "KXBTC-26-100K",
+      "polymarket_market_id": "0xbtc100k",
+      "end_date": "2026-12-31T23:59:59Z"
+    },
+    {
+      "event_id": "fed-cut-2026",
+      "question": "Will the Fed cut rates in 2026?",
+      "kalshi_ticker": "KXFED-26-CUT",
+      "polymarket_market_id": "0xfedcut",
+      "end_date": "2026-12-15T19:00:00Z"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# Web dashboard (run on your own machine). Detection + the pure dashboard
+# service need none of this; only the HTTP server does.
+fastapi>=0.110,<0.116
+uvicorn>=0.27,<0.35
+# Live execution also needs the bot extras (py-clob-client). See requirements-bot.txt.

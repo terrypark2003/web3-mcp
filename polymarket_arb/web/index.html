@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prediction-market arbitrage dashboard</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: #0d1117; color: #e6edf3; }
+  header { padding: 12px 18px; border-bottom: 1px solid #30363d; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  main { padding: 18px; max-width: 1200px; margin: 0 auto; }
+  .badge { padding: 2px 9px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+  .badge.dry { background: #1f6f3f; color: #d6ffe2; }
+  .badge.live { background: #8a1f1f; color: #ffd6d6; }
+  .muted { color: #8b949e; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  input, button { font: inherit; }
+  input[type=text], input[type=password], input[type=number] {
+    background: #0d1117; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; padding: 6px 8px; }
+  button { background: #21262d; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; }
+  button.danger { background: #8a1f1f; border-color: #8a1f1f; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  section { margin: 22px 0; }
+  section h2 { font-size: 14px; margin: 0 0 8px; display: flex; gap: 8px; align-items: baseline; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid #21262d; white-space: nowrap; }
+  th:first-child, td:first-child, th.l, td.l { text-align: left; white-space: normal; }
+  tbody tr:hover { background: #161b22; }
+  .pos { color: #3fb950; } .warn { color: #d29922; }
+  .empty { color: #8b949e; padding: 8px; }
+  .note { font-size: 12px; color: #8b949e; margin-top: 4px; }
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; }
+  #modal.show { display: flex; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 18px; max-width: 560px; width: 92%; }
+  pre { background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 10px; overflow: auto; font-size: 12px; }
+  .err { color: #ff7b72; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Prediction-market arbitrage</h1>
+  <span id="modeBadge" class="badge dry">…</span>
+  <span id="statusText" class="muted"></span>
+  <span style="flex:1"></span>
+  <label class="row muted"><input type="checkbox" id="autoRefresh" checked /> auto</label>
+  <input type="number" id="interval" value="15" min="3" style="width:60px" title="refresh seconds" />
+  <button id="refreshBtn">Refresh</button>
+</header>
+
+<main>
+  <div id="authBar" class="row" style="margin-bottom:14px">
+    <input type="password" id="token" placeholder="Dashboard token (X-Dashboard-Token)" style="width:320px" />
+    <button id="saveToken" class="primary">Connect</button>
+    <span id="authMsg" class="muted"></span>
+  </div>
+
+  <section id="polySection">
+    <h2>Polymarket arbitrage <span class="muted" id="polyCount"></span>
+      <span class="note">risk-free complete-set edges · BUY_SET is executable</span></h2>
+    <table>
+      <thead><tr><th class="l">Question</th><th>Kind</th><th>Edge %</th><th>APR %</th>
+        <th>Cost/set</th><th>Max $</th><th>Total $</th><th></th></tr></thead>
+      <tbody id="polyBody"></tbody>
+    </table>
+  </section>
+
+  <section id="crossSection">
+    <h2>Cross-venue arbitrage <span class="muted" id="crossCount"></span>
+      <span class="note warn">risk-free ONLY if both venues resolve identically</span></h2>
+    <table>
+      <thead><tr><th class="l">Question</th><th>Buy YES</th><th>Buy NO</th><th>Edge %</th>
+        <th>Fee/set</th><th>Max $</th><th>Total $</th></tr></thead>
+      <tbody id="crossBody"></tbody>
+    </table>
+  </section>
+
+  <section id="evSection">
+    <h2>Positive-EV signals <span class="muted" id="evCount"></span>
+      <span class="note warn">NOT risk-free — opinion vs fair value; size with care</span></h2>
+    <table>
+      <thead><tr><th class="l">Question</th><th>Side</th><th>Venue</th><th>Price</th>
+        <th>Fair</th><th>EV/ct</th><th>Edge %</th><th>Max</th></tr></thead>
+      <tbody id="evBody"></tbody>
+    </table>
+  </section>
+</main>
+
+<div id="modal"><div class="card">
+  <h2 id="modalTitle">Stage trade</h2>
+  <div id="modalBody"></div>
+  <div class="row" style="margin-top:14px; justify-content:flex-end">
+    <button id="cancelBtn">Cancel</button>
+    <button id="confirmBtn" class="primary">Confirm</button>
+  </div>
+</div></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let TOKEN = sessionStorage.getItem("dashToken") || "";
+let stagedId = null;
+$("token").value = TOKEN;
+
+async function api(path, opts = {}) {
+  const headers = Object.assign({ "X-Dashboard-Token": TOKEN }, opts.headers || {});
+  if (opts.body) headers["Content-Type"] = "application/json";
+  const res = await fetch(path, Object.assign({}, opts, { headers }));
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail.detail || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+function fmt(n, d = 2) { return n === null || n === undefined ? "–" : Number(n).toFixed(d); }
+function esc(s) { return (s || "").replace(/[<>&]/g, c => ({ "<":"&lt;", ">":"&gt;", "&":"&amp;" }[c])); }
+
+async function loadStatus() {
+  const s = await api("/api/status");
+  const live = s.mode === "live";
+  const badge = $("modeBadge");
+  badge.textContent = live ? "LIVE" : "DRY-RUN";
+  badge.className = "badge " + (live ? "live" : "dry");
+  let txt = `max $${fmt(s.max_stake)} · slippage ${(s.slippage*100).toFixed(1)}%`;
+  if (live && !s.live_ready) txt += ` · ⚠ missing creds: ${s.missing_creds.join(", ")}`;
+  $("statusText").textContent = txt;
+  $("crossSection").style.display = s.cross_enabled ? "" : "none";
+  $("evSection").style.display = s.ev_enabled ? "" : "none";
+}
+
+async function loadOpps() {
+  const o = await api("/api/opportunities");
+  // Polymarket
+  $("polyCount").textContent = `(${o.polymarket.length})`;
+  $("polyBody").innerHTML = o.polymarket.length ? o.polymarket.map(op => `
+    <tr><td class="l">${esc(op.question)}</td><td>${op.kind}</td>
+    <td class="pos">${fmt(op.edge_pct)}</td><td>${op.annualized_pct===null?"instant":fmt(op.annualized_pct,0)}</td>
+    <td>${fmt(op.cost_per_set,3)}</td><td>${fmt(op.capital_required)}</td><td>${fmt(op.total_edge)}</td>
+    <td>${op.kind==="BUY_SET" ? `<button class="primary" onclick="stage('${op.market_id}')">Execute</button>` : ""}</td></tr>
+  `).join("") : `<tr><td colspan="8" class="empty">No opportunities.</td></tr>`;
+  // Cross-venue
+  $("crossCount").textContent = `(${o.cross_venue.length})`;
+  $("crossBody").innerHTML = o.cross_venue.length ? o.cross_venue.map(op => `
+    <tr><td class="l">${esc(op.question)}</td>
+    <td>${op.yes_venue} ${fmt(op.yes_price)}</td><td>${op.no_venue} ${fmt(op.no_price)}</td>
+    <td class="pos">${fmt(op.edge_pct)}</td><td>${fmt(op.fee_per_set,4)}</td>
+    <td>${fmt(op.capital_required)}</td><td>${fmt(op.total_edge)}</td></tr>
+  `).join("") : `<tr><td colspan="7" class="empty">No cross-venue arbitrage.</td></tr>`;
+  // EV
+  $("evCount").textContent = `(${o.ev.length})`;
+  $("evBody").innerHTML = o.ev.length ? o.ev.map(op => `
+    <tr><td class="l">${esc(op.question)}</td><td>${op.side}</td><td>${op.venue}</td>
+    <td>${fmt(op.price)}</td><td>${fmt(op.fair_prob)}</td>
+    <td class="pos">${fmt(op.ev_per_contract,3)}</td><td>${fmt(op.edge_pct,0)}</td><td>${fmt(op.max_size,0)}</td></tr>
+  `).join("") : `<tr><td colspan="8" class="empty">No positive-EV signals.</td></tr>`;
+}
+
+async function refresh() {
+  try { await loadStatus(); await loadOpps(); $("authMsg").textContent = ""; }
+  catch (e) { $("authMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+
+window.stage = async function(marketId) {
+  try {
+    const r = await api("/api/stage", { method: "POST", body: JSON.stringify({ market_id: marketId }) });
+    stagedId = r.stage_id;
+    const live = r.will_place_live;
+    $("modalTitle").textContent = live ? "⚠ CONFIRM LIVE ORDER" : "Confirm (dry-run)";
+    $("modalBody").innerHTML =
+      `<p>${live ? '<span class="err">This will place REAL orders.</span>' : 'Dry-run: nothing will be placed.'}</p>
+       <pre>${esc(r.preview)}</pre>`;
+    $("confirmBtn").className = live ? "danger" : "primary";
+    $("confirmBtn").textContent = live ? "PLACE LIVE" : "Confirm dry-run";
+    $("modal").classList.add("show");
+  } catch (e) { alert("Stage failed: " + e.message); }
+};
+
+$("confirmBtn").onclick = async function() {
+  if (!stagedId) return;
+  try {
+    const r = await api("/api/confirm", { method: "POST", body: JSON.stringify({ stage_id: stagedId }) });
+    $("modalBody").innerHTML = `<pre>${esc(r.detail)}</pre>
+      <p>${r.placed ? '<span class="pos">Placed.</span>' : (r.dry_run ? 'Dry-run — nothing placed.' : '<span class="err">Not placed.</span>')}</p>`;
+    $("confirmBtn").style.display = "none";
+    $("cancelBtn").textContent = "Close";
+    refresh();
+  } catch (e) { $("modalBody").innerHTML += `<p class="err">Confirm failed: ${esc(e.message)}</p>`; }
+};
+
+$("cancelBtn").onclick = async function() {
+  if (stagedId) { try { await api("/api/cancel", { method: "POST", body: JSON.stringify({ stage_id: stagedId }) }); } catch (e) {} }
+  stagedId = null;
+  $("modal").classList.remove("show");
+  $("confirmBtn").style.display = ""; $("cancelBtn").textContent = "Cancel";
+};
+
+$("saveToken").onclick = () => { TOKEN = $("token").value.trim(); sessionStorage.setItem("dashToken", TOKEN); refresh(); };
+$("refreshBtn").onclick = refresh;
+
+let timer = null;
+function scheduleAuto() {
+  if (timer) clearInterval(timer);
+  if ($("autoRefresh").checked) timer = setInterval(refresh, Math.max(3, +$("interval").value) * 1000);
+}
+$("autoRefresh").onchange = scheduleAuto;
+$("interval").onchange = scheduleAuto;
+
+if (TOKEN) refresh();
+scheduleAuto();
+</script>
+</body>
+</html>

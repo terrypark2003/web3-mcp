@@ -1,0 +1,6 @@
+# Extra dependencies for the Telegram bot + live execution.
+# The core scanner (requirements.txt) needs only `requests`; these are required
+# only if you run the Telegram bot or place live orders.
+# [job-queue] extra powers the proactive alert loop.
+python-telegram-bot[job-queue]>=20,<22
+py-clob-client>=0.17
