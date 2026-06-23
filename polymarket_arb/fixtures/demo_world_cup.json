@@ -1,0 +1,20 @@
+{
+  "_comment": "Synthetic World Cup data for the offline demo. Polymarket outright markets + bookmaker decimal odds across a few books. Argentina's NO is value vs the de-vigged consensus.",
+  "polymarket": [
+    {"market_id": "wc-brazil", "question": "Will Brazil win the 2026 World Cup?",
+     "legs": [{"token_id": "b-y", "outcome": "Yes", "ask": [0.18, 1000], "bid": [0.17, 1000]},
+              {"token_id": "b-n", "outcome": "No", "ask": [0.84, 1000], "bid": [0.82, 1000]}]},
+    {"market_id": "wc-arg", "question": "Will Argentina win the 2026 World Cup?",
+     "legs": [{"token_id": "a-y", "outcome": "Yes", "ask": [0.22, 1000], "bid": [0.21, 1000]},
+              {"token_id": "a-n", "outcome": "No", "ask": [0.80, 1000], "bid": [0.78, 1000]}]},
+    {"market_id": "wc-france", "question": "Will France win the 2026 World Cup?",
+     "legs": [{"token_id": "f-y", "outcome": "Yes", "ask": [0.16, 1000], "bid": [0.15, 1000]},
+              {"token_id": "f-n", "outcome": "No", "ask": [0.86, 1000], "bid": [0.84, 1000]}]}
+  ],
+  "bookmaker_prices": {
+    "Brazil": [4.5, 4.8, 4.6],
+    "Argentina": [5.0, 5.2],
+    "France": [6.0, 5.8],
+    "Field": [1.35, 1.33]
+  }
+}

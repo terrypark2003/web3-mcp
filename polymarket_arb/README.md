@@ -256,6 +256,25 @@ serverless time budget, and falls back to demo data (flagged in `meta`) if the
 scan fails or times out. The serverless model also means the live structural
 scan is capped and best-effort; the local app is the source of truth.
 
+## World Cup value betting (Polymarket vs bookmaker consensus)
+
+`python -m polymarket_arb world-cup` (offline demo) finds **positive-EV** World
+Cup bets: it averages the implied probabilities across many bookmakers,
+de-vigs them to a fair probability, and flags any Polymarket outright priced
+below that consensus. This is **not arbitrage** — it's an opinion that the
+bookmaker consensus is closer to the truth than Polymarket's price; any single
+bet can lose in full, so size with fractional Kelly.
+
+- Live: `world-cup --live` (needs `ODDS_API_KEY` from
+  [the-odds-api.com](https://the-odds-api.com/), free ~500 req/month).
+- Alerts: the `world-cup-alerts.yml` workflow runs `NOTIFY_MODE=world_cup`
+  every 3 hours (to respect the free odds-API quota) and pushes new value bets
+  to Telegram. Add `ODDS_API_KEY` to repo Secrets alongside the Telegram ones.
+
+The value math reuses the EV engine (`ev.py`); `sports_value.py` only turns
+bookmaker odds into a fair-probability-per-team map and matches teams to the
+"Will <team> win?" markets.
+
 ## Scheduled Telegram alerts (no server to keep on)
 
 `polymarket_arb.notify` is a one-shot scan-and-send pass: it scans, diffs

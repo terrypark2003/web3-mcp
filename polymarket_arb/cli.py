@@ -13,6 +13,7 @@ clob.polymarket.com. ``demo`` does not.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from .detect import FeeModel, scan_sets
@@ -176,6 +177,34 @@ def cmd_ev(args) -> int:
     return 0
 
 
+def cmd_world_cup(args) -> int:
+    from .scanner import format_ev_table
+
+    if args.live:
+        key = os.environ.get("ODDS_API_KEY")
+        if not key:
+            print("ODDS_API_KEY is required for --live (get one at the-odds-api.com).",
+                  file=sys.stderr)
+            return 2
+        from .client import PolymarketClient
+        from .multivenue import scan_world_cup_value_live
+        from .odds_api import OddsApiClient
+
+        try:
+            ops = scan_world_cup_value_live(
+                PolymarketClient(), OddsApiClient(key), min_edge=args.min_edge
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Live World Cup scan failed: {exc}", file=sys.stderr)
+            return 1
+    else:
+        from .demo import load_demo_world_cup
+
+        ops = load_demo_world_cup(min_edge=args.min_edge)
+    print(format_ev_table(ops))
+    return 0
+
+
 def cmd_snapshot(args) -> int:
     import json
     from .client import PolymarketClient
@@ -253,6 +282,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_ev.add_argument("--limit", type=int, default=None,
                       help="Cap markets scanned when --live")
     p_ev.set_defaults(func=cmd_ev)
+
+    p_wc = sub.add_parser(
+        "world-cup", help="World Cup value bets vs bookmaker consensus (NOT risk-free)"
+    )
+    p_wc.add_argument("--min-edge", type=float, default=0.03,
+                      help="Minimum EV edge over consensus, 0-1 (default: 0.03)")
+    p_wc.add_argument("--live", action="store_true",
+                      help="Scan live Polymarket + odds API (requires ODDS_API_KEY)")
+    p_wc.set_defaults(func=cmd_world_cup)
 
     p_snap = sub.add_parser("snapshot", help="Dump live markets + books to JSON")
     p_snap.add_argument("--out", default="polymarket_snapshot.json",

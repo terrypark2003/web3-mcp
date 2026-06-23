@@ -75,5 +75,44 @@ class TestComputeNotification(unittest.TestCase):
         json.loads(json.dumps(seen))  # must round-trip for the state file
 
 
+WC_PAYLOAD = {
+    "polymarket": [], "cross_venue": [], "ev": [],
+    "world_cup": [
+        {"market_id": "wc-arg", "side": "NO", "venue": "polymarket",
+         "question": "Will Argentina win the 2026 World Cup?", "price": 0.80,
+         "fair_prob": 0.83, "ev_per_contract": 0.03, "edge_pct": 3.8},
+    ],
+    "meta": {"source": "live"},
+}
+
+
+class TestWorldCupNotification(unittest.TestCase):
+    def test_world_cup_section_renders_and_dedups(self):
+        text, seen = compute_notification(WC_PAYLOAD, [])
+        self.assertIsNotNone(text)
+        self.assertIn("World Cup value", text)
+        self.assertIn("Argentina", text)
+        self.assertIn("consensus", text)
+        self.assertIsNone(compute_notification(WC_PAYLOAD, seen)[0])  # dedup
+
+    def test_demo_payload_builds(self):
+        from polymarket_arb.notify import build_world_cup_payload
+        payload = build_world_cup_payload(demo=True)
+        self.assertEqual(payload["meta"]["source"], "demo")
+        self.assertTrue(payload["world_cup"])  # demo fixture yields value bets
+
+    def test_live_without_key_is_error_not_crash(self):
+        import os
+        from polymarket_arb.notify import build_world_cup_payload
+        old = os.environ.pop("ODDS_API_KEY", None)
+        try:
+            payload = build_world_cup_payload(demo=False)
+        finally:
+            if old is not None:
+                os.environ["ODDS_API_KEY"] = old
+        self.assertEqual(payload["meta"]["source"], "error")
+        self.assertIn("ODDS_API_KEY", payload["meta"]["error"])
+
+
 if __name__ == "__main__":
     unittest.main()
