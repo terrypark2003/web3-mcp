@@ -98,6 +98,62 @@ def build_demo_service() -> DashboardService:
     )
 
 
+def build_readonly_service(live: bool) -> DashboardService:
+    """A scan-only service for the public dashboard. No execution is ever wired
+    in a way that places orders here (the read endpoints only call scan fns),
+    but live trading still needs the full local app — this is monitoring only.
+
+    ``live=False`` is the bundled offline demo. ``live=True`` does a *bounded*
+    live scan (capped market count) so it can fit a serverless time budget.
+    """
+    if not live:
+        return build_demo_service()
+
+    config = ExecutionConfig.from_env()
+    executor = PolymarketExecutor(config)
+    fee = FeeModel()
+    limit = int(os.environ.get("LIVE_SCAN_LIMIT", "120") or "120")
+
+    def scan_fn():
+        from .client import PolymarketClient
+        from .scanner import scan_live
+
+        return scan_live(PolymarketClient(), fee, limit=limit)
+
+    def cross_scan_fn():
+        from .client import PolymarketClient
+        from .kalshi_client import KalshiClient
+        from .multivenue import scan_cross_venue_live
+
+        return scan_cross_venue_live(KalshiClient(), PolymarketClient())
+
+    return DashboardService(
+        scan_fn=scan_fn,
+        executor=executor,
+        exec_config=config,
+        cross_scan_fn=cross_scan_fn,
+        ev_scan_fn=None,
+        auth_token="readonly",  # unused on read paths; never gates execution here
+    )
+
+
+def read_only_payload(live: bool = False) -> dict:
+    """Opportunities for the public dashboard, with a ``meta.source`` flag.
+
+    Always returns a renderable payload: if a live scan fails (egress blocked,
+    timeout, API change) it falls back to the bundled demo data and records the
+    error in ``meta`` rather than 500-ing the dashboard.
+    """
+    meta = {"source": "live" if live else "demo"}
+    try:
+        payload = build_readonly_service(live).opportunities()
+    except Exception as exc:  # noqa: BLE001 - the page must always render
+        payload = build_demo_service().opportunities()
+        meta = {"source": "demo", "live_error": str(exc)[:200]}
+    payload["meta"] = meta
+    return payload
+
+
 def create_app(service: DashboardService):
     try:
         from fastapi import Depends, FastAPI, Header, HTTPException

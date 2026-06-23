@@ -234,6 +234,28 @@ dry-run preview → you Confirm. In live mode the modal turns red and says
 The dashboard logic lives in `web_core.py` (pure, unit-tested); `webapp.py` is
 just the HTTP/auth wiring and is best validated by running it locally.
 
+### Public monitor on Vercel (read-only, no keys)
+
+A **read-only** version deploys to Vercel — it shows the three feeds but has
+**no wallet, no execution endpoints**, so it is safe to expose publicly.
+**Never** deploy the live execution app (the one above) to a public URL: it
+would put a wallet private key behind a single shared token on the open
+internet. Trading stays on your own machine.
+
+```
+api/opportunities.py   Vercel serverless function -> read_only_payload() as JSON
+public/index.html      static read-only dashboard (no trade buttons)
+vercel.json            bundles the polymarket_arb package + fixtures into the fn
+```
+
+Deploy: import the repo at [vercel.com/new](https://vercel.com/new) (or
+`npx vercel`). It works immediately on **bundled demo data**. To show live
+data, set `LIVE_SCAN=1` in the Vercel project's env vars — the function then
+does a *bounded* scan (`LIVE_SCAN_LIMIT`, default 120 markets) to fit the
+serverless time budget, and falls back to demo data (flagged in `meta`) if the
+scan fails or times out. The serverless model also means the live structural
+scan is capped and best-effort; the local app is the source of truth.
+
 ## Layout
 
 ```

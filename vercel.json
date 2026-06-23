@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/opportunities.py": {
+      "maxDuration": 30,
+      "includeFiles": "polymarket_arb/**"
+    }
+  }
+}
