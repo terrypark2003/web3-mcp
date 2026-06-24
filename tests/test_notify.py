@@ -152,9 +152,9 @@ class TestResolutionEta(unittest.TestCase):
             _resolution_eta("2026-07-15T00:00:00Z", self.NOW), "정산까지 약 21일"
         )
 
-    def test_months(self):
+    def test_long_horizon_in_days(self):
         self.assertEqual(
-            _resolution_eta("2026-12-24T00:00:00Z", self.NOW), "정산까지 약 6개월"
+            _resolution_eta("2026-12-24T00:00:00Z", self.NOW), "정산까지 약 183일"
         )
 
     def test_hours(self):
@@ -221,6 +221,53 @@ class TestBuyList(unittest.TestCase):
         }
         text, _ = compute_notification(payload, [])
         self.assertNotIn("같은 수량으로 매수", text)
+
+
+class TestMinBuyin(unittest.TestCase):
+    def test_cheap_leg_with_thin_depth_warns_infeasible(self):
+        # OpenAI-IPO shape: cheapest leg 1.7¢ → 59 shares to clear $1, but only
+        # ~5 sets of depth → the $1 floor breaks the arb.
+        payload = {
+            "polymarket": [
+                {"market_id": "neg1", "kind": "BUY_SET", "question": "OpenAI IPO cap?",
+                 "edge_pct": 3.95, "total_edge": 0.19, "capital_required": 4.81,
+                 "cost_per_set": 0.962, "max_sets": 5, "edge_per_set": 0.038,
+                 "annualized_pct": 8.0,
+                 "legs": [{"outcome": "<500B", "ask": 0.017},
+                          {"outcome": "No IPO", "ask": 0.48}]},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("최소 매수: 각 59주", text)   # ceil(1/0.017)
+        self.assertIn("$56.76", text)              # 59 × 0.962
+        self.assertIn("차익 소멸", text)            # infeasible vs depth
+
+    def test_feasible_when_depth_covers_min(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "b1", "kind": "BUY_SET", "question": "Rain?",
+                 "edge_pct": 2.0, "total_edge": 5, "annualized_pct": 50.0,
+                 "cost_per_set": 0.98, "max_sets": 100, "edge_per_set": 0.02,
+                 "legs": [{"outcome": "Yes", "ask": 0.62}, {"outcome": "No", "ask": 0.36}]},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("최소 매수: 각 3주", text)     # ceil(1/0.36)
+        self.assertIn("실행 가능", text)
+        self.assertNotIn("차익 소멸", text)
+
+    def test_no_buyin_without_leg_prices(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "x", "kind": "BUY_SET", "question": "Q?",
+                 "edge_pct": 2.0, "total_edge": 5, "annualized_pct": 50.0},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertNotIn("최소 매수", text)
 
 
 WC_PAYLOAD = {
