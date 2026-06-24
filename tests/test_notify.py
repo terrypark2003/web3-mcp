@@ -75,6 +75,46 @@ class TestComputeNotification(unittest.TestCase):
         json.loads(json.dumps(seen))  # must round-trip for the state file
 
 
+class TestActionableRendering(unittest.TestCase):
+    def test_poly_small_edge_shows_cents_not_zero(self):
+        # A $0.32 profit must not round to "$0" (the old bug that read as "nothing").
+        payload = {
+            "polymarket": [
+                {"market_id": "p9", "kind": "BUY_SET", "question": "OpenAI IPO?",
+                 "edge_pct": 1.52, "total_edge": 0.32, "capital_required": 21.0,
+                 "annualized_pct": 3.0,
+                 "url": "https://polymarket.com/event/openai-ipo"},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("$0.32", text)
+        self.assertNotIn("| $0", text)
+        # An explicit action, not bare jargon.
+        self.assertIn("redeem $1 at resolution", text)
+        # A tappable market link.
+        self.assertIn("https://polymarket.com/event/openai-ipo", text)
+
+    def test_link_omitted_when_url_absent(self):
+        text, _ = compute_notification(PAYLOAD, [])  # PAYLOAD has no url
+        self.assertNotIn("\U0001f517", text)  # no link emoji / dangling link
+
+    def test_world_cup_shows_buy_side_and_link(self):
+        payload = {
+            "polymarket": [], "cross_venue": [], "ev": [],
+            "world_cup": [
+                {"market_id": "wc-arg", "side": "NO", "venue": "polymarket",
+                 "question": "Will Argentina win the 2026 World Cup?", "price": 0.80,
+                 "fair_prob": 0.83, "ev_per_contract": 0.03, "edge_pct": 3.8,
+                 "url": "https://polymarket.com/event/world-cup-2026"},
+            ],
+            "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("BUY NO @ 0.80", text)
+        self.assertIn("https://polymarket.com/event/world-cup-2026", text)
+
+
 WC_PAYLOAD = {
     "polymarket": [], "cross_venue": [], "ev": [],
     "world_cup": [

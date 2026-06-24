@@ -52,6 +52,7 @@ class CompleteSet:
     exhaustive: bool = True      # are the legs *known* to be collectively exhaustive?
     end_date: Optional[str] = None  # ISO-8601 resolution time, if known
     venue: str = "polymarket"    # which exchange this set trades on
+    url: Optional[str] = None    # public market page (to open/trade), if known
 
 
 @dataclass
@@ -74,3 +75,4 @@ class Opportunity:
     total_edge: float            # edge_per_set * max_sets
     annualized_pct: Optional[float]  # simple APR for held positions; None if instant
     legs: list[Leg] = field(default_factory=list)
+    url: Optional[str] = None        # public market page (to open/trade), if known

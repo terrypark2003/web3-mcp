@@ -112,6 +112,7 @@ def detect_buy_set(
         total_edge=edge * max_sets,
         annualized_pct=annualized,
         legs=list(cs.legs),
+        url=cs.url,
     )
 
 
@@ -152,6 +153,7 @@ def detect_mint_sell(
         total_edge=edge * max_sets,
         annualized_pct=None,
         legs=list(cs.legs),
+        url=cs.url,
     )
 
 

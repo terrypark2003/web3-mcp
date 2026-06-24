@@ -48,6 +48,29 @@ def _wc_key(op: dict) -> tuple:
     return ("wc", str(op.get("market_id")), str(op.get("side")))
 
 
+def _usd(value) -> str:
+    """Human dollar amount that never collapses a real edge to ``$0``.
+
+    The old ``${x:.0f}`` rounded a $0.32 profit to ``$0`` — which reads as "no
+    money here". Show cents for small amounts, whole dollars for large ones.
+    """
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return "$?"
+    if abs(x) < 0.01:
+        return "<$0.01"
+    if abs(x) < 1000:
+        return f"${x:,.2f}"
+    return f"${x:,.0f}"
+
+
+def _link_line(op: dict) -> Optional[str]:
+    """A tappable market link line, or None when the URL is unknown."""
+    url = op.get("url")
+    return f"  \U0001f517 {url}" if url else None
+
+
 def compute_notification(
     payload: dict,
     seen_keys,
@@ -97,10 +120,19 @@ def compute_notification(
         lines.append("Polymarket:")
         for o in new_poly:
             apr = "instant" if o.get("annualized_pct") is None else f"{o['annualized_pct']:.0f}% APR"
+            action = ("buy all outcomes now, redeem $1 at resolution"
+                      if o.get("kind") == "BUY_SET"
+                      else "mint a $1 set, sell every outcome now (instant)")
+            cap = o.get("capital_required")
+            cap_str = f" on {_usd(cap)}" if cap else ""
+            lines.append(f"- {o.get('question','')[:48]} — {action}")
             lines.append(
-                f"- {o.get('question','')[:40]} | {o.get('kind')} | "
-                f"edge {o.get('edge_pct',0):.2f}% ({apr}) | ${o.get('total_edge',0):.0f}"
+                f"  edge {o.get('edge_pct',0):.2f}% ({apr}) · "
+                f"profit {_usd(o.get('total_edge',0))}{cap_str}"
             )
+            link = _link_line(o)
+            if link:
+                lines.append(link)
     if new_cross:
         lines.append("Cross-venue:")
         for o in new_cross:
@@ -113,18 +145,29 @@ def compute_notification(
         lines.append("Positive-EV (NOT risk-free):")
         for o in new_ev:
             lines.append(
-                f"- {o.get('question','')[:34]} | {o.get('side')}@{o.get('venue')} "
-                f"{o.get('price',0):.2f} vs fair {o.get('fair_prob',0):.2f} | "
-                f"EV {o.get('ev_per_contract',0):+.3f}/ct"
+                f"- {o.get('question','')[:40]} — BUY {o.get('side')} @ "
+                f"{o.get('price',0):.2f} on {o.get('venue')} "
+                f"(fair {o.get('fair_prob',0):.2f})"
             )
+            lines.append(
+                f"  edge {o.get('edge_pct',0):.1f}% · EV {o.get('ev_per_contract',0):+.3f}/share"
+            )
+            link = _link_line(o)
+            if link:
+                lines.append(link)
     if new_wc:
         lines.append("World Cup value (NOT risk-free — vs bookmaker consensus):")
         for o in new_wc:
             lines.append(
-                f"- {o.get('question','')[:40]} | {o.get('side')} @ "
-                f"{o.get('price',0):.2f} vs consensus {o.get('fair_prob',0):.2f} | "
-                f"EV {o.get('ev_per_contract',0):+.3f}/ct ({o.get('edge_pct',0):.0f}%)"
+                f"- {o.get('question','')[:48]} — BUY {o.get('side')} @ "
+                f"{o.get('price',0):.2f} (consensus fair {o.get('fair_prob',0):.2f})"
             )
+            lines.append(
+                f"  edge {o.get('edge_pct',0):.0f}% · EV {o.get('ev_per_contract',0):+.3f}/share"
+            )
+            link = _link_line(o)
+            if link:
+                lines.append(link)
     return "\n".join(lines), new_seen
 
 

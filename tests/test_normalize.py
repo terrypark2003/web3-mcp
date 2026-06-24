@@ -6,6 +6,7 @@ from polymarket_arb.normalize import (
     complete_set_from_market,
     indicative_event_cost,
     indicative_set_cost,
+    market_url,
     submarket_yes_token,
     top_of_book,
 )
@@ -144,6 +145,37 @@ class TestCompleteSetFromEvent(unittest.TestCase):
 
     def test_indicative_event_cost_sums_yes_prices(self):
         self.assertAlmostEqual(indicative_event_cost(_event()), 0.97, places=6)
+
+
+class TestMarketUrl(unittest.TestCase):
+    def test_builds_from_own_slug(self):
+        self.assertEqual(
+            market_url({"slug": "openai-ipo-closing-market-cap"}),
+            "https://polymarket.com/event/openai-ipo-closing-market-cap",
+        )
+
+    def test_prefers_parent_event_slug(self):
+        obj = {"slug": "will-argentina-win", "events": [{"slug": "world-cup-2026-winner"}]}
+        self.assertEqual(
+            market_url(obj), "https://polymarket.com/event/world-cup-2026-winner"
+        )
+
+    def test_none_without_slug(self):
+        self.assertIsNone(market_url({"id": "123"}))
+
+    def test_complete_set_from_market_carries_url(self):
+        market = {
+            "id": "1", "slug": "will-x-happen",
+            "clobTokenIds": '["t-yes", "t-no"]', "outcomes": '["Yes", "No"]',
+        }
+        cs = complete_set_from_market(market, {})
+        self.assertEqual(cs.url, "https://polymarket.com/event/will-x-happen")
+
+    def test_complete_set_from_event_carries_url(self):
+        event = dict(_event())
+        event["slug"] = "who-wins"
+        cs = complete_set_from_event(event, {})
+        self.assertEqual(cs.url, "https://polymarket.com/event/who-wins")
 
 
 if __name__ == "__main__":
