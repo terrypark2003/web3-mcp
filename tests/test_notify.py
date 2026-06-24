@@ -172,6 +172,57 @@ class TestResolutionEta(unittest.TestCase):
         self.assertIsNone(_resolution_eta("not-a-date", self.NOW))
 
 
+class TestBuyList(unittest.TestCase):
+    def test_negrisk_buy_set_lists_each_yes_with_cents(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "neg1", "kind": "BUY_SET", "question": "OpenAI IPO cap?",
+                 "edge_pct": 3.95, "total_edge": 0.19, "capital_required": 4.81,
+                 "annualized_pct": 8.0, "neg_risk": True,
+                 "legs": [
+                     {"outcome": "<500B", "ask": 0.017},
+                     {"outcome": "No IPO by December 31, 2026", "ask": 0.48},
+                 ]},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("이 결과들을 같은 수량으로 매수", text)
+        self.assertIn("<500B → Yes", text)
+        self.assertIn("1.7¢", text)
+        self.assertIn("No IPO by December 31, 2026 → Yes", text)
+        self.assertIn("48.0¢", text)
+
+    def test_binary_buy_set_keeps_literal_yes_no(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "b1", "kind": "BUY_SET", "question": "Rain?",
+                 "edge_pct": 2.0, "total_edge": 5, "annualized_pct": 50.0,
+                 "legs": [
+                     {"outcome": "Yes", "ask": 0.62},
+                     {"outcome": "No", "ask": 0.36},
+                 ]},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("• Yes  62.0¢", text)
+        self.assertIn("• No  36.0¢", text)
+        self.assertNotIn("Yes → Yes", text)  # don't double-label binary legs
+
+    def test_mint_sell_has_no_buy_list(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "m1", "kind": "MINT_SELL", "question": "Fed?",
+                 "edge_pct": 5.0, "total_edge": 12, "annualized_pct": None,
+                 "legs": [{"outcome": "Yes", "ask": 0.5}, {"outcome": "No", "ask": 0.5}]},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertNotIn("같은 수량으로 매수", text)
+
+
 WC_PAYLOAD = {
     "polymarket": [], "cross_venue": [], "ev": [],
     "world_cup": [

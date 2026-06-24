@@ -103,6 +103,37 @@ def _resolution_eta(end_date, now: Optional[datetime] = None) -> Optional[str]:
     return f"정산까지 약 {max(1, round(secs / 60))}분"
 
 
+def _cents(price) -> str:
+    """Polymarket-style cents for a 0–1 share price (matches the buy buttons)."""
+    try:
+        return f"{float(price) * 100:.1f}¢"
+    except (TypeError, ValueError):
+        return "?"
+
+
+def _buy_list_lines(op: dict) -> list:
+    """High-visibility 'buy exactly these outcomes' checklist for a BUY_SET arb.
+
+    A complete-set BUY_SET means buying one share of *every* leg. For a
+    multi-outcome (negative-risk) market that's the 'Yes' of each candidate; for
+    a binary market it's both Yes and No. Spelling the legs out — with the same
+    cents Polymarket shows on its buy buttons — turns the vague 'buy all
+    outcomes' into a checklist the user can execute without opening the market.
+    """
+    if op.get("kind") != "BUY_SET":
+        return []
+    legs = op.get("legs") or []
+    if not legs:
+        return []
+    out = ["  👉 이 결과들을 같은 수량으로 매수:"]
+    for leg in legs:
+        name = str(leg.get("outcome", "")).strip()
+        # Binary legs are literally "Yes"/"No"; candidate buckets need the side.
+        label = name if name.lower() in ("yes", "no") else f"{name} → Yes"
+        out.append(f"     • {label[:44]}  {_cents(leg.get('ask'))}")
+    return out
+
+
 def compute_notification(
     payload: dict,
     seen_keys,
@@ -166,6 +197,7 @@ def compute_notification(
                 f"  보장수익 {o.get('edge_pct',0):.2f}% ({apr}) · "
                 f"예상수익 {_usd(o.get('total_edge',0))}{cap_str}{eta_str}"
             )
+            lines.extend(_buy_list_lines(o))
             link = _link_line(o)
             if link:
                 lines.append(link)
