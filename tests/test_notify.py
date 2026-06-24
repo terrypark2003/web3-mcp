@@ -24,11 +24,11 @@ class TestComputeNotification(unittest.TestCase):
     def test_first_run_fires_for_risk_free(self):
         text, seen = compute_notification(PAYLOAD, [])
         self.assertIsNotNone(text)
-        self.assertIn("Polymarket:", text)
-        self.assertIn("Cross-venue:", text)
-        self.assertIn("(live)", text)
+        self.assertIn("폴리마켓:", text)
+        self.assertIn("크로스 거래소:", text)
+        self.assertIn("(실시간)", text)
         # EV excluded by default
-        self.assertNotIn("Positive-EV", text)
+        self.assertNotIn("포지티브 EV", text)
 
     def test_dedups_second_run(self):
         _, seen = compute_notification(PAYLOAD, [])
@@ -66,8 +66,8 @@ class TestComputeNotification(unittest.TestCase):
 
     def test_include_ev_flag(self):
         text, _ = compute_notification(PAYLOAD, [], include_ev=True)
-        self.assertIn("Positive-EV", text)
-        self.assertIn("NOT risk-free", text)
+        self.assertIn("포지티브 EV", text)
+        self.assertIn("무위험 아님", text)
 
     def test_seen_keys_are_json_serializable(self):
         import json
@@ -88,12 +88,14 @@ class TestActionableRendering(unittest.TestCase):
             "cross_venue": [], "ev": [], "meta": {"source": "live"},
         }
         text, _ = compute_notification(payload, [])
-        self.assertIn("$0.32", text)
-        self.assertNotIn("| $0", text)
+        self.assertIn("$0.32", text)        # real profit, not rounded to "$0"
+        self.assertIn("보장수익", text)       # plain-language term, not bare "edge"
         # An explicit action, not bare jargon.
-        self.assertIn("redeem $1 at resolution", text)
+        self.assertIn("정산 시 $1 회수", text)
         # A tappable market link.
         self.assertIn("https://polymarket.com/event/openai-ipo", text)
+        # The glossary explains what the term means.
+        self.assertIn("보장수익(edge)", text)
 
     def test_link_omitted_when_url_absent(self):
         text, _ = compute_notification(PAYLOAD, [])  # PAYLOAD has no url
@@ -111,8 +113,9 @@ class TestActionableRendering(unittest.TestCase):
             "meta": {"source": "live"},
         }
         text, _ = compute_notification(payload, [])
-        self.assertIn("BUY NO @ 0.80", text)
+        self.assertIn("NO 0.80에 매수", text)
         self.assertIn("https://polymarket.com/event/world-cup-2026", text)
+        self.assertIn("기대우위(edge)", text)  # glossary for the EV-style term
 
 
 WC_PAYLOAD = {
@@ -130,9 +133,9 @@ class TestWorldCupNotification(unittest.TestCase):
     def test_world_cup_section_renders_and_dedups(self):
         text, seen = compute_notification(WC_PAYLOAD, [])
         self.assertIsNotNone(text)
-        self.assertIn("World Cup value", text)
+        self.assertIn("월드컵 가치", text)
         self.assertIn("Argentina", text)
-        self.assertIn("consensus", text)
+        self.assertIn("컨센서스", text)
         self.assertIsNone(compute_notification(WC_PAYLOAD, seen)[0])  # dedup
 
     def test_demo_payload_builds(self):

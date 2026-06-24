@@ -113,61 +113,85 @@ def compute_notification(
     new_wc.sort(key=lambda o: o.get("ev_per_contract", 0), reverse=True)
 
     src = payload.get("meta", {}).get("source", "demo")
-    header = "⚽ World Cup value" if new_wc and not (new_poly or new_cross or new_ev) \
-        else "\U0001f514 New arbitrage"
-    lines = [f"{header} ({src}):"]
+    src_ko = {"live": "실시간", "demo": "데모", "error": "오류"}.get(src, src)
+    header = "⚽ 월드컵 가치베팅" if new_wc and not (new_poly or new_cross or new_ev) \
+        else "\U0001f514 새 차익거래"
+    lines = [f"{header} ({src_ko}):"]
     if new_poly:
-        lines.append("Polymarket:")
+        lines.append("폴리마켓:")
         for o in new_poly:
-            apr = "instant" if o.get("annualized_pct") is None else f"{o['annualized_pct']:.0f}% APR"
-            action = ("buy all outcomes now, redeem $1 at resolution"
+            apr = "즉시" if o.get("annualized_pct") is None else f"연 {o['annualized_pct']:.0f}%"
+            action = ("모든 결과 매수 후 정산 시 $1 회수"
                       if o.get("kind") == "BUY_SET"
-                      else "mint a $1 set, sell every outcome now (instant)")
+                      else "세트를 $1에 만들어 모든 결과 즉시 매도 (즉시 정산)")
             cap = o.get("capital_required")
-            cap_str = f" on {_usd(cap)}" if cap else ""
+            cap_str = f" (자본 {_usd(cap)})" if cap else ""
             lines.append(f"- {o.get('question','')[:48]} — {action}")
             lines.append(
-                f"  edge {o.get('edge_pct',0):.2f}% ({apr}) · "
-                f"profit {_usd(o.get('total_edge',0))}{cap_str}"
+                f"  보장수익 {o.get('edge_pct',0):.2f}% ({apr}) · "
+                f"예상수익 {_usd(o.get('total_edge',0))}{cap_str}"
             )
             link = _link_line(o)
             if link:
                 lines.append(link)
     if new_cross:
-        lines.append("Cross-venue:")
+        lines.append("크로스 거래소:")
         for o in new_cross:
             lines.append(
-                f"- {o.get('question','')[:38]} | edge {o.get('edge_pct',0):.2f}% "
-                f"(${o.get('total_edge',0):.0f}) | YES@{o.get('yes_venue')} "
-                f"{o.get('yes_price',0):.2f} + NO@{o.get('no_venue')} {o.get('no_price',0):.2f}"
+                f"- {o.get('question','')[:38]} — {o.get('yes_venue')}에서 YES "
+                f"{o.get('yes_price',0):.2f} + {o.get('no_venue')}에서 NO "
+                f"{o.get('no_price',0):.2f} 매수"
+            )
+            lines.append(
+                f"  보장수익 {o.get('edge_pct',0):.2f}% · "
+                f"예상수익 {_usd(o.get('total_edge',0))}"
             )
     if new_ev:
-        lines.append("Positive-EV (NOT risk-free):")
+        lines.append("포지티브 EV (무위험 아님):")
         for o in new_ev:
             lines.append(
-                f"- {o.get('question','')[:40]} — BUY {o.get('side')} @ "
-                f"{o.get('price',0):.2f} on {o.get('venue')} "
-                f"(fair {o.get('fair_prob',0):.2f})"
+                f"- {o.get('question','')[:40]} — {o.get('venue')}에서 "
+                f"{o.get('side')} {o.get('price',0):.2f}에 매수 "
+                f"(공정확률 {o.get('fair_prob',0):.2f})"
             )
             lines.append(
-                f"  edge {o.get('edge_pct',0):.1f}% · EV {o.get('ev_per_contract',0):+.3f}/share"
+                f"  기대우위 {o.get('edge_pct',0):.1f}% · "
+                f"1주당 기대값 {o.get('ev_per_contract',0):+.3f}"
             )
             link = _link_line(o)
             if link:
                 lines.append(link)
     if new_wc:
-        lines.append("World Cup value (NOT risk-free — vs bookmaker consensus):")
+        lines.append("월드컵 가치 (무위험 아님 — 북메이커 컨센서스 대비):")
         for o in new_wc:
             lines.append(
-                f"- {o.get('question','')[:48]} — BUY {o.get('side')} @ "
-                f"{o.get('price',0):.2f} (consensus fair {o.get('fair_prob',0):.2f})"
+                f"- {o.get('question','')[:48]} — {o.get('side')} "
+                f"{o.get('price',0):.2f}에 매수 (컨센서스 공정확률 {o.get('fair_prob',0):.2f})"
             )
             lines.append(
-                f"  edge {o.get('edge_pct',0):.0f}% · EV {o.get('ev_per_contract',0):+.3f}/share"
+                f"  기대우위 {o.get('edge_pct',0):.0f}% · "
+                f"1주당 기대값 {o.get('ev_per_contract',0):+.3f}"
             )
             link = _link_line(o)
             if link:
                 lines.append(link)
+
+    # 용어 풀이 — 메시지에 실제로 쓰인 용어만 각주로.
+    glossary = []
+    if new_poly or new_cross:
+        glossary.append(
+            "ℹ️ 보장수익(edge)=투입 자본 대비 무조건 남는 비율 "
+            "(차익거래는 무위험, 정산까지 자본이 묶임)"
+        )
+    if new_ev or new_wc:
+        glossary.append(
+            "ℹ️ 기대우위(edge)=공정확률보다 싸게 산 정도. 평균적으로 유리할 뿐, "
+            "무위험 아님 — 한 판은 전액 잃을 수 있음"
+        )
+    if glossary:
+        lines.append("")
+        lines.extend(glossary)
+
     return "\n".join(lines), new_seen
 
 
@@ -297,7 +321,7 @@ def main() -> int:  # pragma: no cover - orchestration, exercised via the workfl
     if note:
         text += f"\n\n\U0001f916 Gemini: {note}"
     if demo:
-        text = "[DEMO TEST — not real data]\n" + text
+        text = "[데모 테스트 — 실제 데이터 아님]\n" + text
     send_telegram(token, chat_id, text)
     print("Notification sent.")
     return 0
