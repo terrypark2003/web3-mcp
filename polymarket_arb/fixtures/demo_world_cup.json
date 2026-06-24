@@ -7,6 +7,7 @@
               {"token_id": "b-n", "outcome": "No", "ask": [0.84, 1000], "bid": [0.82, 1000]}]},
     {"market_id": "wc-arg", "question": "Will Argentina win the 2026 World Cup?",
      "url": "https://polymarket.com/event/will-argentina-win-the-2026-world-cup",
+     "end_date": "2026-07-19T00:00:00Z",
      "legs": [{"token_id": "a-y", "outcome": "Yes", "ask": [0.22, 1000], "bid": [0.21, 1000]},
               {"token_id": "a-n", "outcome": "No", "ask": [0.80, 1000], "bid": [0.78, 1000]}]},
     {"market_id": "wc-france", "question": "Will France win the 2026 World Cup?",

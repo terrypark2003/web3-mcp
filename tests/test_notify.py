@@ -1,6 +1,7 @@
 import unittest
+from datetime import datetime, timezone
 
-from polymarket_arb.notify import compute_notification
+from polymarket_arb.notify import _resolution_eta, compute_notification
 
 PAYLOAD = {
     "polymarket": [
@@ -101,6 +102,31 @@ class TestActionableRendering(unittest.TestCase):
         text, _ = compute_notification(PAYLOAD, [])  # PAYLOAD has no url
         self.assertNotIn("\U0001f517", text)  # no link emoji / dangling link
 
+    def test_poly_buy_set_shows_resolution_eta(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "p1", "kind": "BUY_SET", "question": "Rain?",
+                 "edge_pct": 2.0, "total_edge": 5, "annualized_pct": 50.0,
+                 "end_date": "2099-01-01T00:00:00Z"},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("정산까지 약", text)
+
+    def test_mint_sell_omits_eta(self):
+        # MINT_SELL settles instantly — no holding period to show.
+        payload = {
+            "polymarket": [
+                {"market_id": "p2", "kind": "MINT_SELL", "question": "Fed?",
+                 "edge_pct": 5.0, "total_edge": 12, "annualized_pct": None,
+                 "end_date": "2099-01-01T00:00:00Z"},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertNotIn("정산까지 약", text)  # the ETA marker (glossary wording differs)
+
     def test_world_cup_shows_buy_side_and_link(self):
         payload = {
             "polymarket": [], "cross_venue": [], "ev": [],
@@ -116,6 +142,34 @@ class TestActionableRendering(unittest.TestCase):
         self.assertIn("NO 0.80에 매수", text)
         self.assertIn("https://polymarket.com/event/world-cup-2026", text)
         self.assertIn("기대우위(edge)", text)  # glossary for the EV-style term
+
+
+class TestResolutionEta(unittest.TestCase):
+    NOW = datetime(2026, 6, 24, tzinfo=timezone.utc)
+
+    def test_days(self):
+        self.assertEqual(
+            _resolution_eta("2026-07-15T00:00:00Z", self.NOW), "정산까지 약 21일"
+        )
+
+    def test_months(self):
+        self.assertEqual(
+            _resolution_eta("2026-12-24T00:00:00Z", self.NOW), "정산까지 약 6개월"
+        )
+
+    def test_hours(self):
+        self.assertEqual(
+            _resolution_eta("2026-06-24T05:00:00Z", self.NOW), "정산까지 약 5시간"
+        )
+
+    def test_past_is_flagged(self):
+        self.assertEqual(
+            _resolution_eta("2026-06-01T00:00:00Z", self.NOW), "정산 시점 지남"
+        )
+
+    def test_missing_or_bad_is_none(self):
+        self.assertIsNone(_resolution_eta(None, self.NOW))
+        self.assertIsNone(_resolution_eta("not-a-date", self.NOW))
 
 
 WC_PAYLOAD = {
