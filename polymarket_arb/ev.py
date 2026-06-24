@@ -46,6 +46,7 @@ class EVOpportunity:
     edge_pct: float         # ev relative to price paid, percent
     max_size: float         # depth available at that ask
     end_date: Optional[str]
+    url: Optional[str] = None  # public market page (to open/trade), if known
 
 
 def fair_value_from_map(probs: dict[str, float]) -> FairValue:
@@ -66,6 +67,7 @@ def _ev_for_side(
     market_id: str,
     question: str,
     end_date: Optional[str],
+    url: Optional[str] = None,
 ) -> Optional[EVOpportunity]:
     if leg.best_ask is None:
         return None
@@ -89,6 +91,7 @@ def _ev_for_side(
         edge_pct=(ev / price * 100) if price > 0 else 0.0,
         max_size=size,
         end_date=end_date,
+        url=url,
     )
 
 
@@ -117,7 +120,7 @@ def detect_ev(
     ):
         op = _ev_for_side(
             leg, cs.venue, side, win_prob, fee_model, min_ev, min_size,
-            cs.market_id, cs.question, cs.end_date,
+            cs.market_id, cs.question, cs.end_date, cs.url,
         )
         if op is not None:
             out.append(op)

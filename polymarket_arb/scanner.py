@@ -121,6 +121,7 @@ def opportunity_to_dict(op: Opportunity) -> dict:
         "capital_required": round(op.capital_required, 2),
         "total_edge": round(op.total_edge, 2),
         "annualized_pct": None if op.annualized_pct is None else round(op.annualized_pct, 1),
+        "url": op.url,
         "legs": [
             {
                 "outcome": leg.outcome,
@@ -199,6 +200,7 @@ def ev_to_dict(op) -> dict:
         "edge_pct": round(op.edge_pct, 2),
         "max_size": round(op.max_size, 2),
         "end_date": op.end_date,
+        "url": op.url,
     }
 
 

@@ -72,6 +72,7 @@ def _poly_set_from_entry(entry: dict) -> CompleteSet:
         legs=legs,
         end_date=entry.get("end_date"),
         venue="polymarket",
+        url=entry.get("url"),
     )
 
 

@@ -30,6 +30,24 @@ from typing import Any, Optional
 
 from .models import CompleteSet, Leg, Level
 
+POLYMARKET_BASE = "https://polymarket.com"
+
+
+def market_url(obj: dict) -> Optional[str]:
+    """Best-effort public Polymarket page URL for a Gamma market/event object.
+
+    Polymarket pages live at ``/event/<slug>``. A market is part of an event, so
+    prefer the parent event's slug (``events[0].slug``) and fall back to the
+    object's own ``slug``. Returns None when no slug is present, so callers can
+    simply omit the link rather than emit a broken one.
+    """
+    slug = None
+    events = obj.get("events")
+    if isinstance(events, list) and events and isinstance(events[0], dict):
+        slug = events[0].get("slug")
+    slug = slug or obj.get("slug")
+    return f"{POLYMARKET_BASE}/event/{slug}" if slug else None
+
 
 def _maybe_json_list(value: Any) -> list:
     """Gamma encodes several list fields as JSON strings; decode defensively."""
@@ -110,6 +128,7 @@ def complete_set_from_market(
         neg_risk=bool(market.get("negRisk", False)),
         exhaustive=True,  # a single binary market is exhaustive by construction
         end_date=market.get("endDate"),
+        url=market_url(market),
     )
 
 
@@ -195,6 +214,7 @@ def complete_set_from_event(
         neg_risk=neg_risk,
         exhaustive=neg_risk,
         end_date=event.get("endDate"),
+        url=market_url(event),
     )
 
 
