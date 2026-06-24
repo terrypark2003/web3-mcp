@@ -1,6 +1,7 @@
 import unittest
+from datetime import datetime, timezone
 
-from polymarket_arb.notify import compute_notification
+from polymarket_arb.notify import _resolution_eta, compute_notification
 
 PAYLOAD = {
     "polymarket": [
@@ -101,6 +102,31 @@ class TestActionableRendering(unittest.TestCase):
         text, _ = compute_notification(PAYLOAD, [])  # PAYLOAD has no url
         self.assertNotIn("\U0001f517", text)  # no link emoji / dangling link
 
+    def test_poly_buy_set_shows_resolution_eta(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "p1", "kind": "BUY_SET", "question": "Rain?",
+                 "edge_pct": 2.0, "total_edge": 5, "annualized_pct": 50.0,
+                 "end_date": "2099-01-01T00:00:00Z"},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("정산까지 약", text)
+
+    def test_mint_sell_omits_eta(self):
+        # MINT_SELL settles instantly — no holding period to show.
+        payload = {
+            "polymarket": [
+                {"market_id": "p2", "kind": "MINT_SELL", "question": "Fed?",
+                 "edge_pct": 5.0, "total_edge": 12, "annualized_pct": None,
+                 "end_date": "2099-01-01T00:00:00Z"},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertNotIn("정산까지 약", text)  # the ETA marker (glossary wording differs)
+
     def test_world_cup_shows_buy_side_and_link(self):
         payload = {
             "polymarket": [], "cross_venue": [], "ev": [],
@@ -116,6 +142,132 @@ class TestActionableRendering(unittest.TestCase):
         self.assertIn("NO 0.80에 매수", text)
         self.assertIn("https://polymarket.com/event/world-cup-2026", text)
         self.assertIn("기대우위(edge)", text)  # glossary for the EV-style term
+
+
+class TestResolutionEta(unittest.TestCase):
+    NOW = datetime(2026, 6, 24, tzinfo=timezone.utc)
+
+    def test_days(self):
+        self.assertEqual(
+            _resolution_eta("2026-07-15T00:00:00Z", self.NOW), "정산까지 약 21일"
+        )
+
+    def test_long_horizon_in_days(self):
+        self.assertEqual(
+            _resolution_eta("2026-12-24T00:00:00Z", self.NOW), "정산까지 약 183일"
+        )
+
+    def test_hours(self):
+        self.assertEqual(
+            _resolution_eta("2026-06-24T05:00:00Z", self.NOW), "정산까지 약 5시간"
+        )
+
+    def test_past_is_flagged(self):
+        self.assertEqual(
+            _resolution_eta("2026-06-01T00:00:00Z", self.NOW), "정산 시점 지남"
+        )
+
+    def test_missing_or_bad_is_none(self):
+        self.assertIsNone(_resolution_eta(None, self.NOW))
+        self.assertIsNone(_resolution_eta("not-a-date", self.NOW))
+
+
+class TestBuyList(unittest.TestCase):
+    def test_negrisk_buy_set_lists_each_yes_with_cents(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "neg1", "kind": "BUY_SET", "question": "OpenAI IPO cap?",
+                 "edge_pct": 3.95, "total_edge": 0.19, "capital_required": 4.81,
+                 "annualized_pct": 8.0, "neg_risk": True,
+                 "legs": [
+                     {"outcome": "<500B", "ask": 0.017},
+                     {"outcome": "No IPO by December 31, 2026", "ask": 0.48},
+                 ]},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("이 결과들을 같은 수량으로 매수", text)
+        self.assertIn("<500B → Yes", text)
+        self.assertIn("1.7¢", text)
+        self.assertIn("No IPO by December 31, 2026 → Yes", text)
+        self.assertIn("48.0¢", text)
+
+    def test_binary_buy_set_keeps_literal_yes_no(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "b1", "kind": "BUY_SET", "question": "Rain?",
+                 "edge_pct": 2.0, "total_edge": 5, "annualized_pct": 50.0,
+                 "legs": [
+                     {"outcome": "Yes", "ask": 0.62},
+                     {"outcome": "No", "ask": 0.36},
+                 ]},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("• Yes  62.0¢", text)
+        self.assertIn("• No  36.0¢", text)
+        self.assertNotIn("Yes → Yes", text)  # don't double-label binary legs
+
+    def test_mint_sell_has_no_buy_list(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "m1", "kind": "MINT_SELL", "question": "Fed?",
+                 "edge_pct": 5.0, "total_edge": 12, "annualized_pct": None,
+                 "legs": [{"outcome": "Yes", "ask": 0.5}, {"outcome": "No", "ask": 0.5}]},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertNotIn("같은 수량으로 매수", text)
+
+
+class TestMinBuyin(unittest.TestCase):
+    def test_cheap_leg_with_thin_depth_warns_infeasible(self):
+        # OpenAI-IPO shape: cheapest leg 1.7¢ → 59 shares to clear $1, but only
+        # ~5 sets of depth → the $1 floor breaks the arb.
+        payload = {
+            "polymarket": [
+                {"market_id": "neg1", "kind": "BUY_SET", "question": "OpenAI IPO cap?",
+                 "edge_pct": 3.95, "total_edge": 0.19, "capital_required": 4.81,
+                 "cost_per_set": 0.962, "max_sets": 5, "edge_per_set": 0.038,
+                 "annualized_pct": 8.0,
+                 "legs": [{"outcome": "<500B", "ask": 0.017},
+                          {"outcome": "No IPO", "ask": 0.48}]},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("최소 매수: 각 59주", text)   # ceil(1/0.017)
+        self.assertIn("$56.76", text)              # 59 × 0.962
+        self.assertIn("차익 소멸", text)            # infeasible vs depth
+
+    def test_feasible_when_depth_covers_min(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "b1", "kind": "BUY_SET", "question": "Rain?",
+                 "edge_pct": 2.0, "total_edge": 5, "annualized_pct": 50.0,
+                 "cost_per_set": 0.98, "max_sets": 100, "edge_per_set": 0.02,
+                 "legs": [{"outcome": "Yes", "ask": 0.62}, {"outcome": "No", "ask": 0.36}]},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("최소 매수: 각 3주", text)     # ceil(1/0.36)
+        self.assertIn("실행 가능", text)
+        self.assertNotIn("차익 소멸", text)
+
+    def test_no_buyin_without_leg_prices(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "x", "kind": "BUY_SET", "question": "Q?",
+                 "edge_pct": 2.0, "total_edge": 5, "annualized_pct": 50.0},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertNotIn("최소 매수", text)
 
 
 WC_PAYLOAD = {

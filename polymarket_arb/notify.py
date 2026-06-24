@@ -22,7 +22,9 @@ bot's alert semantics.
 from __future__ import annotations
 
 import json
+import math
 import os
+from datetime import datetime, timezone
 from typing import Optional
 
 from .webapp import read_only_payload
@@ -69,6 +71,113 @@ def _link_line(op: dict) -> Optional[str]:
     """A tappable market link line, or None when the URL is unknown."""
     url = op.get("url")
     return f"  \U0001f517 {url}" if url else None
+
+
+def _resolution_eta(end_date, now: Optional[datetime] = None) -> Optional[str]:
+    """Plain-Korean time until resolution (when capital unlocks), or None.
+
+    Held positions (BUY_SET / cross-venue / value bets) lock capital until the
+    market resolves, so the holding period matters as much as the edge. Returns
+    a coarse Korean string in days ("정산까지 약 191일"); None if the date is
+    missing or unparseable. Coarse on purpose — the exact minute is noise here.
+    """
+    if not end_date:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(end_date).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    secs = (dt - now).total_seconds()
+    if secs <= 0:
+        return "정산 시점 지남"
+    days = secs / 86400
+    if days >= 1:
+        return f"정산까지 약 {round(days)}일"
+    hours = secs / 3600
+    if hours >= 1:
+        return f"정산까지 약 {round(hours)}시간"
+    return f"정산까지 약 {max(1, round(secs / 60))}분"
+
+
+def _cents(price) -> str:
+    """Polymarket-style cents for a 0–1 share price (matches the buy buttons)."""
+    try:
+        return f"{float(price) * 100:.1f}¢"
+    except (TypeError, ValueError):
+        return "?"
+
+
+def _buy_list_lines(op: dict) -> list:
+    """High-visibility 'buy exactly these outcomes' checklist for a BUY_SET arb.
+
+    A complete-set BUY_SET means buying one share of *every* leg. For a
+    multi-outcome (negative-risk) market that's the 'Yes' of each candidate; for
+    a binary market it's both Yes and No. Spelling the legs out — with the same
+    cents Polymarket shows on its buy buttons — turns the vague 'buy all
+    outcomes' into a checklist the user can execute without opening the market.
+    """
+    if op.get("kind") != "BUY_SET":
+        return []
+    legs = op.get("legs") or []
+    if not legs:
+        return []
+    out = ["  👉 이 결과들을 같은 수량으로 매수:"]
+    for leg in legs:
+        name = str(leg.get("outcome", "")).strip()
+        # Binary legs are literally "Yes"/"No"; candidate buckets need the side.
+        label = name if name.lower() in ("yes", "no") else f"{name} → Yes"
+        out.append(f"     • {label[:44]}  {_cents(leg.get('ask'))}")
+    return out
+
+
+def _min_buyin_lines(op: dict) -> list:
+    """Minimum balanced buy-in under Polymarket's $1-per-order floor.
+
+    A risk-free complete set needs the SAME share count on every leg, so you
+    can't just put $1 on each — unequal shares break the hedge. The cheapest leg
+    is the one that struggles to clear the $1 minimum order, so it sets the
+    floor: ``K = ceil(1 / cheapest_ask)`` shares of every leg.
+
+    We then compare K to the top-of-book depth (``max_sets``). When the $1 floor
+    needs more shares than the book offers at these prices, buying up to the
+    minimum walks the book and the edge evaporates — so the alert says so
+    instead of implying a clean fill.
+    """
+    if op.get("kind") != "BUY_SET":
+        return []
+    legs = op.get("legs") or []
+    asks = [leg.get("ask") for leg in legs]
+    asks = [a for a in asks if isinstance(a, (int, float)) and a > 0]
+    if not asks or len(asks) != len(legs):
+        return []
+    cheapest = min(asks)
+    cost_per_set = op.get("cost_per_set")
+    if not isinstance(cost_per_set, (int, float)) or cost_per_set <= 0:
+        cost_per_set = sum(asks)
+    k_min = math.ceil(1.0 / cheapest)
+    out = [
+        f"  💰 최소 매수: 각 {k_min}주 (가장 싼 결과 {_cents(cheapest)} 기준) "
+        f"= 약 {_usd(k_min * cost_per_set)}"
+    ]
+    max_sets = op.get("max_sets")
+    if isinstance(max_sets, (int, float)) and max_sets > 0:
+        if k_min > max_sets:
+            out.append(
+                f"  ⚠️ 호가 깊이 약 {int(max_sets)}주뿐 → "
+                "최소주문 $1 맞추면 차익 소멸 (실행 어려움)"
+            )
+        else:
+            edge_per_set = op.get("edge_per_set")
+            if isinstance(edge_per_set, (int, float)):
+                out.append(
+                    f"     이 물량 차익 ≈ {_usd(k_min * edge_per_set)} (실행 가능)"
+                )
+            else:
+                out.append("     (호가 깊이 내 — 실행 가능)")
+    return out
 
 
 def compute_notification(
@@ -126,11 +235,16 @@ def compute_notification(
                       else "세트를 $1에 만들어 모든 결과 즉시 매도 (즉시 정산)")
             cap = o.get("capital_required")
             cap_str = f" (자본 {_usd(cap)})" if cap else ""
+            # 자본이 묶이는 BUY_SET에만 정산 기간 표시 (MINT_SELL은 즉시 정산).
+            eta = _resolution_eta(o.get("end_date")) if o.get("annualized_pct") is not None else None
+            eta_str = f" · {eta}" if eta else ""
             lines.append(f"- {o.get('question','')[:48]} — {action}")
             lines.append(
                 f"  보장수익 {o.get('edge_pct',0):.2f}% ({apr}) · "
-                f"예상수익 {_usd(o.get('total_edge',0))}{cap_str}"
+                f"예상수익 {_usd(o.get('total_edge',0))}{cap_str}{eta_str}"
             )
+            lines.extend(_buy_list_lines(o))
+            lines.extend(_min_buyin_lines(o))
             link = _link_line(o)
             if link:
                 lines.append(link)
@@ -142,9 +256,11 @@ def compute_notification(
                 f"{o.get('yes_price',0):.2f} + {o.get('no_venue')}에서 NO "
                 f"{o.get('no_price',0):.2f} 매수"
             )
+            eta = _resolution_eta(o.get("end_date"))
+            eta_str = f" · {eta}" if eta else ""
             lines.append(
                 f"  보장수익 {o.get('edge_pct',0):.2f}% · "
-                f"예상수익 {_usd(o.get('total_edge',0))}"
+                f"예상수익 {_usd(o.get('total_edge',0))}{eta_str}"
             )
     if new_ev:
         lines.append("포지티브 EV (무위험 아님):")
@@ -154,9 +270,11 @@ def compute_notification(
                 f"{o.get('side')} {o.get('price',0):.2f}에 매수 "
                 f"(공정확률 {o.get('fair_prob',0):.2f})"
             )
+            eta = _resolution_eta(o.get("end_date"))
+            eta_str = f" · {eta}" if eta else ""
             lines.append(
                 f"  기대우위 {o.get('edge_pct',0):.1f}% · "
-                f"1주당 기대값 {o.get('ev_per_contract',0):+.3f}"
+                f"1주당 기대값 {o.get('ev_per_contract',0):+.3f}{eta_str}"
             )
             link = _link_line(o)
             if link:
@@ -168,9 +286,11 @@ def compute_notification(
                 f"- {o.get('question','')[:48]} — {o.get('side')} "
                 f"{o.get('price',0):.2f}에 매수 (컨센서스 공정확률 {o.get('fair_prob',0):.2f})"
             )
+            eta = _resolution_eta(o.get("end_date"))
+            eta_str = f" · {eta}" if eta else ""
             lines.append(
                 f"  기대우위 {o.get('edge_pct',0):.0f}% · "
-                f"1주당 기대값 {o.get('ev_per_contract',0):+.3f}"
+                f"1주당 기대값 {o.get('ev_per_contract',0):+.3f}{eta_str}"
             )
             link = _link_line(o)
             if link:
