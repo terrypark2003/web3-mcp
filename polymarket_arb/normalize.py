@@ -101,6 +101,31 @@ def top_of_book(raw_book: Optional[dict]) -> tuple[Optional[Level], Optional[Lev
     return best_ask, best_bid
 
 
+def _levels(entries) -> list[Level]:
+    """Parse a raw CLOB price-level list into clean ``Level``s (bad rows dropped)."""
+    out: list[Level] = []
+    for entry in entries or []:
+        price = _to_float(entry.get("price"))
+        size = _to_float(entry.get("size"))
+        if price is None or size is None or size <= 0:
+            continue
+        out.append(Level(price=price, size=size))
+    return out
+
+
+def book_ladders(raw_book: Optional[dict]) -> tuple[list[Level], list[Level]]:
+    """Full (asks, bids) ladders from a raw CLOB ``/book`` response.
+
+    Asks ascending by price, bids descending — the order the realism layer walks
+    them. Empty lists when the book is missing, so callers degrade to top-of-book.
+    """
+    if not raw_book:
+        return [], []
+    asks = sorted(_levels(raw_book.get("asks")), key=lambda lv: lv.price)
+    bids = sorted(_levels(raw_book.get("bids")), key=lambda lv: lv.price, reverse=True)
+    return asks, bids
+
+
 def complete_set_from_market(
     market: dict, books_by_token: dict[str, dict]
 ) -> Optional[CompleteSet]:
@@ -116,9 +141,14 @@ def complete_set_from_market(
 
     legs: list[Leg] = []
     for token_id, outcome in zip(token_ids, outcomes):
-        best_ask, best_bid = top_of_book(books_by_token.get(token_id))
+        raw = books_by_token.get(token_id)
+        best_ask, best_bid = top_of_book(raw)
+        asks, bids = book_ladders(raw)
         legs.append(
-            Leg(token_id=token_id, outcome=outcome, best_ask=best_ask, best_bid=best_bid)
+            Leg(
+                token_id=token_id, outcome=outcome,
+                best_ask=best_ask, best_bid=best_bid, asks=asks, bids=bids,
+            )
         )
 
     return CompleteSet(
@@ -179,13 +209,18 @@ def _yes_leg_from_submarket(
     token_id = submarket_yes_token(market)
     if token_id is None:
         return None
-    best_ask, best_bid = top_of_book(books_by_token.get(token_id))
+    raw = books_by_token.get(token_id)
+    best_ask, best_bid = top_of_book(raw)
+    asks, bids = book_ladders(raw)
     label = (
         market.get("groupItemTitle")
         or market.get("question")
         or token_id
     )
-    return Leg(token_id=token_id, outcome=str(label), best_ask=best_ask, best_bid=best_bid)
+    return Leg(
+        token_id=token_id, outcome=str(label),
+        best_ask=best_ask, best_bid=best_bid, asks=asks, bids=bids,
+    )
 
 
 def complete_set_from_event(

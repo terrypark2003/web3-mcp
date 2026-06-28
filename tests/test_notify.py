@@ -144,6 +144,54 @@ class TestActionableRendering(unittest.TestCase):
         self.assertIn("기대우위(edge)", text)  # glossary for the EV-style term
 
 
+class TestRealismRendering(unittest.TestCase):
+    def test_confidence_line_shown_when_present(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "p1", "kind": "BUY_SET", "question": "Rain?",
+                 "edge_pct": 2.0, "total_edge": 5, "annualized_pct": 50.0,
+                 "confidence": 72, "executable_sets": 120, "net_total_edge": 2.4,
+                 "feasible_min_order": True},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("현실성 72/100", text)
+        self.assertIn("🟢", text)               # high-confidence marker
+        self.assertIn("실행가능 120세트", text)
+
+    def test_low_confidence_red_marker(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "p1", "kind": "BUY_SET", "question": "Thin?",
+                 "edge_pct": 4.0, "total_edge": 0.2, "annualized_pct": 8.0,
+                 "confidence": 9, "executable_sets": 0, "net_total_edge": 0.0,
+                 "feasible_min_order": False},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [])
+        self.assertIn("🔴", text)
+        self.assertIn("실행 어려움", text)
+
+    def test_min_confidence_filters(self):
+        payload = {
+            "polymarket": [
+                {"market_id": "p1", "kind": "BUY_SET", "question": "Thin?",
+                 "edge_pct": 4.0, "total_edge": 0.2, "annualized_pct": 8.0,
+                 "confidence": 9, "feasible_min_order": False},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+        text, _ = compute_notification(payload, [], min_confidence=30.0)
+        self.assertIsNone(text)  # below the realism bar -> not sent
+
+    def test_world_cup_value_line_speaks_dollars(self):
+        # price 0.80, fair 0.83 -> $1 stake is worth ~0.83/0.80 = $1.04 at fair odds.
+        text, _ = compute_notification(WC_PAYLOAD, [])
+        self.assertIn("$1 → 약 $1.04 가치", text)
+
+
 class TestResolutionEta(unittest.TestCase):
     NOW = datetime(2026, 6, 24, tzinfo=timezone.utc)
 

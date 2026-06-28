@@ -38,6 +38,11 @@ from .models import (
     CompleteSet,
     Opportunity,
 )
+from .realism import (
+    confidence_score,
+    executable_buy_set,
+    executable_mint_sell,
+)
 
 _SECONDS_PER_YEAR = 365.25 * 24 * 3600
 
@@ -56,6 +61,8 @@ class FeeModel:
     taker_fee_rate: float = 0.0     # fraction of traded notional
     min_edge_per_set: float = 0.005  # USDC; ignore thinner edges (noise / model error)
     min_size: float = 1.0            # shares; ignore opportunities thinner than this
+    gas_cost_usd: float = 0.0        # fixed on-chain cost per opportunity (redeem/split)
+    min_order_usd: float = 1.0       # Polymarket's per-order $ floor (binds realism)
 
 
 def _years_until(end_date: Optional[str], now: Optional[datetime] = None) -> Optional[float]:
@@ -73,6 +80,13 @@ def _years_until(end_date: Optional[str], now: Optional[datetime] = None) -> Opt
     if seconds <= 0:
         return None
     return seconds / _SECONDS_PER_YEAR
+
+
+def _score(ex, *, instant: bool, years, n_legs: int):
+    """Confidence score for an executable, tolerating a missing book-walk."""
+    if ex is None:
+        return 0.0, ["호가 깊이 정보 없음 — 실행 가능성 미확인"]
+    return confidence_score(ex, instant=instant, years=years, n_legs=n_legs)
 
 
 def detect_buy_set(
@@ -95,6 +109,15 @@ def detect_buy_set(
     years = _years_until(cs.end_date, now)
     annualized = (edge_fraction / years) * 100 if years else None
 
+    ex = executable_buy_set(
+        cs.legs,
+        taker_fee_rate=fees.taker_fee_rate,
+        gas_cost_usd=fees.gas_cost_usd,
+        min_edge_per_set=fees.min_edge_per_set,
+        min_order_usd=fees.min_order_usd,
+    )
+    confidence, reasons = _score(ex, instant=False, years=years, n_legs=len(cs.legs))
+
     return Opportunity(
         kind=ARB_BUY_SET,
         market_id=cs.market_id,
@@ -113,6 +136,13 @@ def detect_buy_set(
         annualized_pct=annualized,
         legs=list(cs.legs),
         url=cs.url,
+        executable_sets=ex.executable_sets if ex else 0.0,
+        executable_edge_per_set=ex.edge_per_set if ex else 0.0,
+        net_total_edge=ex.net_total_edge if ex else 0.0,
+        min_order_shares=ex.min_order_shares if ex else 0.0,
+        feasible_min_order=ex.feasible_min_order if ex else False,
+        confidence=confidence,
+        confidence_reasons=reasons,
     )
 
 
@@ -135,6 +165,16 @@ def detect_mint_sell(
     if max_sets < fees.min_size:
         return None
 
+    ex = executable_mint_sell(
+        cs.legs,
+        taker_fee_rate=fees.taker_fee_rate,
+        gas_cost_usd=fees.gas_cost_usd,
+        min_edge_per_set=fees.min_edge_per_set,
+        min_order_usd=fees.min_order_usd,
+    )
+    # MINT_SELL pays back instantly -> no lockup; that's its big realism edge.
+    confidence, reasons = _score(ex, instant=True, years=None, n_legs=len(cs.legs))
+
     # $1 of capital per set, returned instantly -> APR is not meaningful.
     return Opportunity(
         kind=ARB_MINT_SELL,
@@ -154,6 +194,13 @@ def detect_mint_sell(
         annualized_pct=None,
         legs=list(cs.legs),
         url=cs.url,
+        executable_sets=ex.executable_sets if ex else 0.0,
+        executable_edge_per_set=ex.edge_per_set if ex else 0.0,
+        net_total_edge=ex.net_total_edge if ex else 0.0,
+        min_order_shares=ex.min_order_shares if ex else 0.0,
+        feasible_min_order=ex.feasible_min_order if ex else False,
+        confidence=confidence,
+        confidence_reasons=reasons,
     )
 
 
@@ -170,13 +217,27 @@ def detect(
     return found
 
 
+def rank_key(op: Opportunity) -> tuple:
+    """Sort key that puts *realistic* money on top, not the biggest paper edge.
+
+    Feasible-under-the-$1-floor opportunities rank above infeasible ones; within
+    each group we rank by net executable edge weighted by confidence, so a thin
+    far-dated edge sinks below a smaller-but-real one. Falls back gracefully to
+    ``total_edge`` when no realism layer ran (all-zero realism fields).
+    """
+    realism_value = op.net_total_edge * (op.confidence / 100.0)
+    if op.confidence <= 0 and op.net_total_edge == 0:
+        realism_value = op.total_edge  # no book-walk -> legacy ordering
+    return (1 if op.feasible_min_order else 0, realism_value)
+
+
 def scan_sets(
     sets, fees: Optional[FeeModel] = None, now: Optional[datetime] = None
 ) -> list[Opportunity]:
-    """Detect across many complete sets, ranked by total edge (descending)."""
+    """Detect across many complete sets, ranked by realistic (book-walked) edge."""
     fees = fees or FeeModel()
     out: list[Opportunity] = []
     for cs in sets:
         out.extend(detect(cs, fees, now))
-    out.sort(key=lambda o: o.total_edge, reverse=True)
+    out.sort(key=rank_key, reverse=True)
     return out

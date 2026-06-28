@@ -133,6 +133,45 @@ def _buy_list_lines(op: dict) -> list:
     return out
 
 
+def _realism_line(op: dict) -> Optional[str]:
+    """One at-a-glance realism line for a risk-free op, when a score is present.
+
+    The score (see ``realism.py``) folds depth over the $1 floor, capital
+    lockup, leg count and slippage buffer into 0-100. A 🟢/🟡/🔴 marker makes
+    "is this actually executable?" readable without parsing the numbers — the
+    exact gap PR #4's bare warning left open.
+    """
+    conf = op.get("confidence")
+    if not isinstance(conf, (int, float)):
+        return None
+    mark = "🟢" if conf >= 60 else ("🟡" if conf >= 30 else "🔴")
+    line = f"  {mark} 현실성 {conf:.0f}/100"
+    ex = op.get("executable_sets")
+    net = op.get("net_total_edge")
+    if isinstance(ex, (int, float)) and ex > 0 and isinstance(net, (int, float)):
+        line += f" (실행가능 {ex:.0f}세트 · 순차익 {_usd(net)})"
+    elif op.get("feasible_min_order") is False:
+        line += " (실행 어려움 — $1 최소주문 미달)"
+    return line
+
+
+def _wc_value_line(op: dict) -> Optional[str]:
+    """'$1 → 약 $X 가치' for a value bet — the user's own mental model.
+
+    Buying at ``price`` when the consensus fair probability is ``fair_prob``
+    means each $1 staked is worth ``fair/price`` at fair odds. A +10% edge reads
+    as '$1 → 약 $1.10 가치', which is exactly how the ask was phrased.
+    """
+    price = op.get("price")
+    fair = op.get("fair_prob")
+    if not isinstance(price, (int, float)) or not isinstance(fair, (int, float)):
+        return None
+    if price <= 0:
+        return None
+    value = fair / price
+    return f"  💵 $1 → 약 {_usd(value)} 가치 ({_cents(price)}에 매수, 공정 {_cents(fair)})"
+
+
 def _min_buyin_lines(op: dict) -> list:
     """Minimum balanced buy-in under Polymarket's $1-per-order floor.
 
@@ -185,13 +224,22 @@ def compute_notification(
     seen_keys,
     include_ev: bool = False,
     min_edge_pct: float = 0.0,
+    min_confidence: float = 0.0,
 ) -> tuple[Optional[str], list]:
     """Return (message_or_None, new_seen_keys) given a payload and prior state.
 
     ``new_seen_keys`` is reset to whatever is currently live (JSON-friendly
     lists), so disappeared edges re-fire when they come back.
+
+    ``min_confidence`` drops risk-free ops below a realism score (0-100) so the
+    feed shows executable money, not paper edges. Ops without a score (legacy
+    payloads) default to 0 and pass only when ``min_confidence`` is 0.
     """
-    poly = [o for o in payload.get("polymarket", []) if o.get("edge_pct", 0) >= min_edge_pct]
+    poly = [
+        o for o in payload.get("polymarket", [])
+        if o.get("edge_pct", 0) >= min_edge_pct
+        and o.get("confidence", 0) >= min_confidence
+    ]
     cross = [o for o in payload.get("cross_venue", []) if o.get("edge_pct", 0) >= min_edge_pct]
     ev = payload.get("ev", []) if include_ev else []
     world_cup = payload.get("world_cup", [])  # always included when present
@@ -216,7 +264,16 @@ def compute_notification(
     new_cross = [current[k][1] for k in new_keys if k[0] == "cross"]
     new_ev = [current[k][1] for k in new_keys if k[0] == "ev"]
     new_wc = [current[k][1] for k in new_keys if k[0] == "wc"]
-    new_poly.sort(key=lambda o: o.get("edge_pct", 0), reverse=True)
+    # Order the feed by *realism*, not the biggest paper edge: feasible first,
+    # then confidence x net edge (falls back to edge_pct for legacy payloads
+    # without a realism score). Mirrors detect.rank_key.
+    def _poly_rank(o: dict) -> tuple:
+        conf = o.get("confidence", 0) or 0
+        net = o.get("net_total_edge", 0) or 0
+        value = (conf / 100.0) * net if (conf or net) else o.get("edge_pct", 0)
+        return (1 if o.get("feasible_min_order", True) else 0, value)
+
+    new_poly.sort(key=_poly_rank, reverse=True)
     new_cross.sort(key=lambda o: o.get("total_edge", 0), reverse=True)
     new_ev.sort(key=lambda o: o.get("ev_per_contract", 0), reverse=True)
     new_wc.sort(key=lambda o: o.get("ev_per_contract", 0), reverse=True)
@@ -243,6 +300,9 @@ def compute_notification(
                 f"  보장수익 {o.get('edge_pct',0):.2f}% ({apr}) · "
                 f"예상수익 {_usd(o.get('total_edge',0))}{cap_str}{eta_str}"
             )
+            realism = _realism_line(o)
+            if realism:
+                lines.append(realism)
             lines.extend(_buy_list_lines(o))
             lines.extend(_min_buyin_lines(o))
             link = _link_line(o)
@@ -292,6 +352,9 @@ def compute_notification(
                 f"  기대우위 {o.get('edge_pct',0):.0f}% · "
                 f"1주당 기대값 {o.get('ev_per_contract',0):+.3f}{eta_str}"
             )
+            value = _wc_value_line(o)
+            if value:
+                lines.append(value)
             link = _link_line(o)
             if link:
                 lines.append(link)
@@ -428,9 +491,11 @@ def main() -> int:  # pragma: no cover - orchestration, exercised via the workfl
 
     include_ev = os.environ.get("NOTIFY_INCLUDE_EV", "").lower() in ("1", "true", "yes")
     min_edge = float(os.environ.get("NOTIFY_MIN_EDGE_PCT", "0") or "0")
+    min_conf = float(os.environ.get("NOTIFY_MIN_CONFIDENCE", "0") or "0")
 
     text, new_seen = compute_notification(
-        payload, load_state(), include_ev=include_ev, min_edge_pct=min_edge
+        payload, load_state(), include_ev=include_ev, min_edge_pct=min_edge,
+        min_confidence=min_conf,
     )
     save_state(new_seen)
 
