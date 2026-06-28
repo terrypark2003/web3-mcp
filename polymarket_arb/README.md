@@ -133,12 +133,20 @@ the web), both hosts must be added to the allowlist or the client returns
 
 - **Efficiency / competition.** Obvious complete-set gaps are sniped by bots
   in seconds. Persistent edges live in illiquid markets where you can't size.
-- **Costs.** Edges are reported **gross** of Polygon gas and slippage. Set
-  `--fee-rate` and a sane `--min-edge`; a 0.5¢ "edge" is noise.
-- **Depth.** Sizing is the *thinnest leg's top-of-book size* — a conservative
-  cap. Real fills walk the book and move the price against you.
+- **Costs.** The headline edge is **gross**; the realism layer reports a
+  **net** edge after `--fee-rate` and a fixed gas estimate. Set a sane
+  `--min-edge`; a 0.5¢ "edge" is noise.
+- **Depth & the $1 floor → realism score.** Beyond the top-of-book headline,
+  the scanner now *walks the full order book* (`realism.py`) to find how many
+  sets survive before the edge erodes (`EXEC`), and checks Polymarket's
+  $1-per-order minimum — when the cheapest leg needs more shares than the book
+  offers, the arb is flagged `[!$1-floor]` (exactly the OpenAI-IPO false
+  positive). All of this folds into a **0–100 confidence score** (`CONF`) that
+  also weighs lockup and leg count, and the scanner ranks by it — so real money
+  sorts above paper edges instead of the other way around.
 - **Capital lockup.** `BUY_SET` ties up capital until resolution. Judge it on
-  the reported **APR**, not the raw edge %.
+  the reported **APR** and confidence score, not the raw edge %. `MINT_SELL`
+  is instant, so it scores higher for the same edge.
 - **Resolution risk.** The "risk-free $1" assumes clean resolution. Ambiguous
   criteria or a disputed UMA oracle outcome can break the assumption.
 - **Exhaustiveness (negRisk).** Multi-leg `BUY_SET` is only truly risk-free if
@@ -268,8 +276,13 @@ bet can lose in full, so size with fractional Kelly.
 - Live: `world-cup --live` (needs `ODDS_API_KEY` from
   [the-odds-api.com](https://the-odds-api.com/), free ~500 req/month).
 - Alerts: the `world-cup-alerts.yml` workflow runs `NOTIFY_MODE=world_cup`
-  every 3 hours (to respect the free odds-API quota) and pushes new value bets
-  to Telegram. Add `ODDS_API_KEY` to repo Secrets alongside the Telegram ones.
+  every 2 hours (~360 calls/month, under the free quota) and pushes new value
+  bets to Telegram, each with a tappable link and a `$1 → ~$X 가치` line. The
+  default threshold is `NOTIFY_WC_MIN_EDGE=0.10` — a **+10% value edge**, i.e.
+  "$1 staked is worth ~$1.10 at fair odds". Lower it to see thinner value.
+  For **live, in-play** alerts during matches you need a paid odds-API plan
+  with live odds; then drop the cron to e.g. `*/15 * * * *`. Add `ODDS_API_KEY`
+  to repo Secrets alongside the Telegram ones.
 
 The value math reuses the EV engine (`ev.py`); `sports_value.py` only turns
 bookmaker odds into a fair-probability-per-team map and matches teams to the

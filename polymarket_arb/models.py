@@ -26,13 +26,23 @@ class Level:
 
 @dataclass
 class Leg:
-    """One outcome token of a complete set, with its top-of-book quotes."""
+    """One outcome token of a complete set, with its order book.
+
+    ``best_ask`` / ``best_bid`` are the top of book (kept for the headline
+    economics and for backward compatibility). ``asks`` / ``bids`` are the full
+    ladders when available, so the realism layer can *walk the book* — the only
+    honest way to know how many shares you can actually take before the edge
+    erodes. When the ladders are empty, walking falls back to the single
+    top-of-book level, so callers that only have top of book still work.
+    """
 
     token_id: str
     outcome: str                 # "Yes" / "No" or a candidate label
     best_ask: Optional[Level]    # lowest ask  -> price to BUY one share
     best_bid: Optional[Level]    # highest bid -> proceeds to SELL one share
     venue: str = "polymarket"    # which exchange this leg trades on
+    asks: list[Level] = field(default_factory=list)  # full ask ladder (cheap->dear)
+    bids: list[Level] = field(default_factory=list)  # full bid ladder (dear->cheap)
 
 
 @dataclass
@@ -76,3 +86,15 @@ class Opportunity:
     annualized_pct: Optional[float]  # simple APR for held positions; None if instant
     legs: list[Leg] = field(default_factory=list)
     url: Optional[str] = None        # public market page (to open/trade), if known
+
+    # --- Realism layer (depth-aware execution economics) ------------------- #
+    # These answer "what can I *actually* capture?", as opposed to the
+    # top-of-book headline above. Populated by the realism module; all default
+    # to the top-of-book values so an Opportunity built without it still works.
+    executable_sets: float = 0.0         # max sets while edge survives a book-walk
+    executable_edge_per_set: float = 0.0 # realized edge/set at that size (gross of gas)
+    net_total_edge: float = 0.0          # executable edge after fees + gas
+    min_order_shares: float = 0.0        # shares the $1-per-order floor forces (K)
+    feasible_min_order: bool = True      # can the $1 floor be met within real depth?
+    confidence: float = 0.0              # 0-100 realism score (see realism.py)
+    confidence_reasons: list[str] = field(default_factory=list)

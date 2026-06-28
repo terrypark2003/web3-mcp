@@ -122,6 +122,13 @@ def opportunity_to_dict(op: Opportunity) -> dict:
         "total_edge": round(op.total_edge, 2),
         "annualized_pct": None if op.annualized_pct is None else round(op.annualized_pct, 1),
         "url": op.url,
+        "executable_sets": round(op.executable_sets, 2),
+        "executable_edge_per_set": round(op.executable_edge_per_set, 4),
+        "net_total_edge": round(op.net_total_edge, 2),
+        "min_order_shares": round(op.min_order_shares, 2),
+        "feasible_min_order": op.feasible_min_order,
+        "confidence": round(op.confidence, 1),
+        "confidence_reasons": list(op.confidence_reasons),
         "legs": [
             {
                 "outcome": leg.outcome,
@@ -139,22 +146,25 @@ def format_table(opportunities: list[Opportunity]) -> str:
         return "No arbitrage opportunities found above the configured thresholds."
 
     header = (
-        f"{'KIND':<10} {'EDGE/SET':>9} {'EDGE%':>7} {'MAX$':>9} "
-        f"{'TOT$':>8} {'APR%':>8}  QUESTION"
+        f"{'KIND':<10} {'CONF':>5} {'EDGE%':>7} {'NET$':>8} {'EXEC':>7} "
+        f"{'APR%':>8}  QUESTION"
     )
     lines = [header, "-" * len(header)]
     for op in opportunities:
         apr = "instant" if op.annualized_pct is None else f"{op.annualized_pct:,.0f}"
-        question = op.question if len(op.question) <= 48 else op.question[:45] + "..."
+        question = op.question if len(op.question) <= 44 else op.question[:41] + "..."
         flag = "" if op.exhaustive else "  [!exhaustive-unconfirmed]"
+        infeasible = "" if op.feasible_min_order else " [!$1-floor]"
         lines.append(
-            f"{op.kind:<10} {op.edge_per_set:>9.4f} {op.edge_pct:>6.2f}% "
-            f"{op.capital_required:>9.2f} {op.total_edge:>8.2f} {apr:>8}  "
-            f"{question}{flag}"
+            f"{op.kind:<10} {op.confidence:>4.0f} {op.edge_pct:>6.2f}% "
+            f"{op.net_total_edge:>8.2f} {op.executable_sets:>7.0f} {apr:>8}  "
+            f"{question}{flag}{infeasible}"
         )
     note = (
-        "\nBUY_SET locks capital until resolution (APR shown). MINT_SELL is "
-        "instant. Edges are gross of gas/slippage; confirm depth before sizing."
+        "\nCONF = realism score 0-100 (depth over $1 floor, lockup, legs, "
+        "slippage buffer). NET$ = book-walked edge net of fees/gas. EXEC = sets "
+        "you can take before the edge erodes. [!$1-floor] = can't clear the "
+        "$1-per-order minimum within real depth."
     )
     return "\n".join(lines) + "\n" + note
 
