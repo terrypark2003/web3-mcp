@@ -275,18 +275,29 @@ bet can lose in full, so size with fractional Kelly.
 
 - Live: `world-cup --live` (needs `ODDS_API_KEY` from
   [the-odds-api.com](https://the-odds-api.com/), free ~500 req/month).
-- Alerts: the `world-cup-alerts.yml` workflow runs `NOTIFY_MODE=world_cup`
-  every 2 hours (~360 calls/month, under the free quota) and pushes new value
-  bets to Telegram, each with a tappable link and a `$1 → ~$X 가치` line. The
-  default threshold is `NOTIFY_WC_MIN_EDGE=0.10` — a **+10% value edge**, i.e.
-  "$1 staked is worth ~$1.10 at fair odds". Lower it to see thinner value.
-  For **live, in-play** alerts during matches you need a paid odds-API plan
-  with live odds; then drop the cron to e.g. `*/15 * * * *`. Add `ODDS_API_KEY`
-  to repo Secrets alongside the Telegram ones.
 
-The value math reuses the EV engine (`ev.py`); `sports_value.py` only turns
-bookmaker odds into a fair-probability-per-team map and matches teams to the
-"Will <team> win?" markets.
+There are **two** flavors of value:
+
+- **Outright winner** (the `world-cup` CLI command above) — tournament-long,
+  settles only at the final.
+- **Per-match** (the alerts) — each game's home/draw/away odds de-vigged into a
+  fair probability, compared to the Polymarket match market. These **settle
+  right after the match**, so they're the near-dated bets that pair with the
+  `NOTIFY_MAX_DAYS` window. This is what "games resolving in a day or two"
+  actually means.
+
+The `world-cup-alerts.yml` workflow runs `NOTIFY_MODE=world_cup` every 2 hours
+(~360 calls/month, under the free quota) and pushes new **per-match** value bets
+to Telegram, each with a tappable link, a `$1 → ~$X 가치` line, and the time to
+settlement. Defaults: `NOTIFY_WC_MIN_EDGE=0.05` (a +5% value edge, "$1 worth
+~$1.05 at fair odds"; raise to `0.10` for a stricter bar) and `NOTIFY_MAX_DAYS=2`
+(only matches in the next two days). For true **live, in-play** odds you need a
+paid odds-API plan; then drop the cron to e.g. `*/15 * * * *`. Add `ODDS_API_KEY`
+to repo Secrets alongside the Telegram ones.
+
+The value math reuses the de-vig/EV engine (`ev.py` + `sports_value.py`):
+`world_cup_match_odds` (h2h) → de-vig per match → compare each team/Draw leg of
+the matched Polymarket market to its price.
 
 ## Gemini: a plain-language analyst (not the oracle)
 

@@ -1,0 +1,27 @@
+{
+  "_comment": "Synthetic per-MATCH World Cup data for the offline demo. Polymarket 3-way match markets (Home/Draw/Away) + bookmaker h2h decimal odds. Argentina is priced 45c on Polymarket but the de-vigged consensus fair prob is ~52%, a +7% value bet that settles right after the match.",
+  "polymarket": [
+    {"market_id": "wc-arg-mex", "question": "Argentina vs. Mexico (2026 World Cup)",
+     "url": "https://polymarket.com/event/argentina-vs-mexico-2026",
+     "end_date": "2026-06-30T20:00:00Z",
+     "legs": [
+       {"token_id": "am-arg", "outcome": "Argentina", "ask": [0.45, 500], "bid": [0.44, 500]},
+       {"token_id": "am-draw", "outcome": "Draw", "ask": [0.30, 500], "bid": [0.28, 500]},
+       {"token_id": "am-mex", "outcome": "Mexico", "ask": [0.27, 500], "bid": [0.25, 500]}
+     ]},
+    {"market_id": "wc-fra-cro", "question": "France vs. Croatia (2026 World Cup)",
+     "url": "https://polymarket.com/event/france-vs-croatia-2026",
+     "end_date": "2026-07-01T18:00:00Z",
+     "legs": [
+       {"token_id": "fc-fra", "outcome": "France", "ask": [0.58, 400], "bid": [0.56, 400]},
+       {"token_id": "fc-draw", "outcome": "Draw", "ask": [0.26, 400], "bid": [0.24, 400]},
+       {"token_id": "fc-cro", "outcome": "Croatia", "ask": [0.20, 400], "bid": [0.18, 400]}
+     ]}
+  ],
+  "matches": [
+    {"home": "Argentina", "away": "Mexico", "commence_time": "2026-06-30T18:00:00Z",
+     "prices": {"Argentina": [1.85, 1.90, 1.88], "Draw": [3.6, 3.5, 3.7], "Mexico": [4.5, 4.6, 4.4]}},
+    {"home": "France", "away": "Croatia", "commence_time": "2026-07-01T16:00:00Z",
+     "prices": {"France": [1.70, 1.72, 1.68], "Draw": [3.8, 3.9, 3.7], "Croatia": [5.5, 5.4, 5.6]}}
+  ]
+}

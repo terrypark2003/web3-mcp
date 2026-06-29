@@ -18,6 +18,9 @@ _CROSS_FIXTURE = os.path.join(
 _WORLD_CUP_FIXTURE = os.path.join(
     os.path.dirname(__file__), "fixtures", "demo_world_cup.json"
 )
+_WORLD_CUP_MATCHES_FIXTURE = os.path.join(
+    os.path.dirname(__file__), "fixtures", "demo_world_cup_matches.json"
+)
 
 
 def _level(raw: Optional[list]) -> Optional[Level]:
@@ -127,10 +130,22 @@ def load_demo_ev_sets(path: str = _CROSS_FIXTURE) -> tuple[list[CompleteSet], Fa
 
 
 def load_demo_world_cup(path: str = _WORLD_CUP_FIXTURE, min_edge: float = 0.02):
-    """Build World Cup value opportunities from the offline demo fixture."""
+    """Build World Cup outright value opportunities from the offline demo fixture."""
     from .sports_value import scan_world_cup_value
 
     data = _load_cross_fixture(path)
     sets = [_poly_set_from_entry(e) for e in data.get("polymarket", [])]
     prices = data.get("bookmaker_prices", {})
     return scan_world_cup_value(sets, prices, min_edge=min_edge)
+
+
+def load_demo_world_cup_matches(
+    path: str = _WORLD_CUP_MATCHES_FIXTURE, min_edge: float = 0.05
+):
+    """Build per-MATCH World Cup value opportunities from the offline demo fixture."""
+    from .sports_value import scan_world_cup_match_value
+
+    data = _load_cross_fixture(path)
+    sets = [_poly_set_from_entry(e) for e in data.get("polymarket", [])]
+    matches = data.get("matches", [])
+    return scan_world_cup_match_value(sets, matches, min_edge=min_edge)

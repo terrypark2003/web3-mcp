@@ -1,9 +1,10 @@
 name: World Cup value alerts
 
-# Pushes NEW value World Cup bets (Polymarket price vs de-vigged bookmaker
-# consensus) to Telegram, with a tappable link per bet. Default threshold is a
-# +10% value edge ("$1 → ~$1.10 at fair odds"); lower NOTIFY_WC_MIN_EDGE to see
-# thinner value.
+# Pushes NEW per-MATCH value World Cup bets (Polymarket price vs de-vigged
+# bookmaker h2h consensus) to Telegram, with a tappable link per bet. These
+# markets settle right after the match, so they pair with NOTIFY_MAX_DAYS.
+# Default threshold is a +5% value edge ("$1 → ~$1.05 at fair odds"); raise
+# NOTIFY_WC_MIN_EDGE to 0.10 for a stricter "$1 → ~$1.10" bar.
 #
 # Cadence is bounded by the free odds-API tier (~500 requests/month): every 2h
 # is ~360/month, comfortably under the cap and tighter than the old 3h. For
@@ -53,7 +54,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-          NOTIFY_WC_MIN_EDGE: "0.10"   # +10% value vs consensus ("$1 -> ~$1.10")
+          NOTIFY_WC_MIN_EDGE: "0.05"   # +5% value vs consensus ("$1 -> ~$1.05"); per-match
           NOTIFY_MAX_DAYS: "2"         # only matches resolving within 2 days (near-dated focus)
           # Optional: one-line Gemini context note on each alert (off if no key).
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
