@@ -1,0 +1,55 @@
+name: Near-resolution favorites alerts
+
+# Pushes NEW soon-resolving "favorites" to Telegram: any Polymarket market that
+# settles within NOTIFY_MAX_DAYS where one outcome is priced in the favorite
+# band (≈ "$1 -> $1.1 if it wins"). NOT risk-free — the price is the implied
+# probability, so these are likely-but-risked, not guaranteed (that's the arb
+# workflow). Pure Polymarket data — needs only the Telegram secrets, no odds key.
+#
+# Scheduled runs only fire from the default branch.
+on:
+  schedule:
+    - cron: "13 */2 * * *"   # every 2 hours
+  workflow_dispatch:
+    inputs:
+      demo:
+        description: "Send a labelled DEMO test message"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: favorites-alerts
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Restore alert state
+        uses: actions/cache@v4
+        with:
+          path: notify_state.json
+          key: favorites-state-${{ github.run_id }}
+          restore-keys: |
+            favorites-state-
+
+      - name: Scan and notify
+        env:
+          NOTIFY_MODE: favorites
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NOTIFY_MAX_DAYS: "2"          # only markets resolving within 2 days
+          NOTIFY_FAV_MIN_PRICE: "0.80"  # payout band floor (0.80 -> ~1.25x)
+          NOTIFY_FAV_MAX_PRICE: "0.91"  # payout band ceiling (0.91 -> ~1.10x, "$1->$1.1")
+          NOTIFY_FAV_MIN_SIZE: "5"      # min shares at the ask (real depth)
+          NOTIFY_DEMO: ${{ (github.event_name == 'workflow_dispatch' && inputs.demo) && '1' || '' }}
+        run: python -m polymarket_arb.notify

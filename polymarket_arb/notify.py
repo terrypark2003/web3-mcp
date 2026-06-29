@@ -50,6 +50,10 @@ def _wc_key(op: dict) -> tuple:
     return ("wc", str(op.get("market_id")), str(op.get("side")))
 
 
+def _fav_key(op: dict) -> tuple:
+    return ("fav", str(op.get("market_id")), str(op.get("outcome")))
+
+
 def _usd(value) -> str:
     """Human dollar amount that never collapses a real edge to ``$0``.
 
@@ -287,6 +291,10 @@ def compute_notification(
           if _resolves_soon(o, max_days_to_resolution)]
     world_cup = [o for o in payload.get("world_cup", [])
                  if _resolves_soon(o, max_days_to_resolution)]
+    # Favorites carry their own resolution window from the scanner, but honor an
+    # extra notify-level window too if one is set.
+    favorites = [o for o in payload.get("favorites", [])
+                 if _resolves_soon(o, max_days_to_resolution)]
 
     current: dict[tuple, tuple] = {}
     for op in poly:
@@ -297,6 +305,8 @@ def compute_notification(
         current[_ev_key(op)] = ("ev", op)
     for op in world_cup:
         current[_wc_key(op)] = ("wc", op)
+    for op in favorites:
+        current[_fav_key(op)] = ("fav", op)
 
     seen = {tuple(k) for k in seen_keys}
     new_keys = [k for k in current if k not in seen]
@@ -308,6 +318,7 @@ def compute_notification(
     new_cross = [current[k][1] for k in new_keys if k[0] == "cross"]
     new_ev = [current[k][1] for k in new_keys if k[0] == "ev"]
     new_wc = [current[k][1] for k in new_keys if k[0] == "wc"]
+    new_fav = [current[k][1] for k in new_keys if k[0] == "fav"]
     # Order the feed by *realism*, not the biggest paper edge: feasible first,
     # then confidence x net edge (falls back to edge_pct for legacy payloads
     # without a realism score). Mirrors detect.rank_key.
@@ -321,11 +332,21 @@ def compute_notification(
     new_cross.sort(key=lambda o: o.get("total_edge", 0), reverse=True)
     new_ev.sort(key=lambda o: o.get("ev_per_contract", 0), reverse=True)
     new_wc.sort(key=lambda o: o.get("ev_per_contract", 0), reverse=True)
+    # Favorites: soonest-to-resolve first, then highest payout.
+    new_fav.sort(key=lambda o: (
+        o.get("days_to_resolution") if o.get("days_to_resolution") is not None else 1e9,
+        -(o.get("payout_multiple", 0) or 0),
+    ))
 
     src = payload.get("meta", {}).get("source", "demo")
     src_ko = {"live": "실시간", "demo": "데모", "error": "오류"}.get(src, src)
-    header = "⚽ 월드컵 가치베팅" if new_wc and not (new_poly or new_cross or new_ev) \
-        else "\U0001f514 새 차익거래"
+    only = lambda *others: not any(others)  # noqa: E731
+    if new_wc and only(new_poly, new_cross, new_ev, new_fav):
+        header = "⚽ 월드컵 가치베팅"
+    elif new_fav and only(new_poly, new_cross, new_ev, new_wc):
+        header = "💵 곧 끝나는 유력후보 (무위험 아님)"
+    else:
+        header = "\U0001f514 새 차익거래"
     lines = [f"{header} ({src_ko}):"]
     if new_poly:
         lines.append("폴리마켓:")
@@ -402,6 +423,28 @@ def compute_notification(
             link = _link_line(o)
             if link:
                 lines.append(link)
+    if new_fav:
+        lines.append("곧 끝나는 유력후보 (무위험 아님 — 빗나가면 전액 손실):")
+        for o in new_fav:
+            price = o.get("price", 0) or 0
+            payout = o.get("payout_multiple") or (1.0 / price if price else 0)
+            prob = o.get("implied_prob", price) or 0
+            gain_pct = (payout - 1.0) * 100
+            lines.append(
+                f"- {o.get('question','')[:48]} — {o.get('outcome','')[:24]} "
+                f"{_cents(price)}에 매수"
+            )
+            eta = _resolution_eta(o.get("end_date"))
+            eta_str = f" · {eta}" if eta else ""
+            lines.append(
+                f"  💵 $1 → 약 {_usd(payout)} (적중 시 +{gain_pct:.0f}%){eta_str}"
+            )
+            lines.append(
+                f"  적중 확률 ≈ {prob*100:.0f}% (시장가 기준) · 빗나가면 전액 손실"
+            )
+            link = _link_line(o)
+            if link:
+                lines.append(link)
 
     # 용어 풀이 — 메시지에 실제로 쓰인 용어만 각주로.
     glossary = []
@@ -414,6 +457,11 @@ def compute_notification(
         glossary.append(
             "ℹ️ 기대우위(edge)=공정확률보다 싸게 산 정도. 평균적으로 유리할 뿐, "
             "무위험 아님 — 한 판은 전액 잃을 수 있음"
+        )
+    if new_fav:
+        glossary.append(
+            "ℹ️ 유력후보=시장가가 곧 끝나는 결과를 높은 확률로 보는 것. 차익도 우위도 "
+            "아님 — 가격이 곧 승률이라, 적중 시 소액(+10%대) 이익·빗나가면 전액 손실"
         )
     if glossary:
         lines.append("")
@@ -436,7 +484,50 @@ def save_state(seen: list, path: str = _STATE_FILE) -> None:
 
 
 def _empty_payload(meta: dict) -> dict:
-    return {"polymarket": [], "cross_venue": [], "ev": [], "world_cup": [], "meta": meta}
+    return {"polymarket": [], "cross_venue": [], "ev": [], "world_cup": [],
+            "favorites": [], "meta": meta}
+
+
+def build_favorites_payload(demo: bool = False) -> dict:
+    """Soon-resolving favorites ("$1 -> ~$1.1 if it wins"), in alert shape.
+
+    NOT risk-free — see ``favorites.py``. Any market (not just sports): an
+    outcome priced in the favorite band that settles within ``NOTIFY_MAX_DAYS``.
+    Env knobs: NOTIFY_FAV_MIN_PRICE / NOTIFY_FAV_MAX_PRICE (payout band),
+    NOTIFY_FAV_MIN_SIZE (depth), NOTIFY_MAX_DAYS (window). A live scan failure
+    returns a ``meta.source == "error"`` payload so the caller skips it.
+    """
+    from .favorites import favorite_to_dict
+
+    min_price = float(os.environ.get("NOTIFY_FAV_MIN_PRICE", "0.80") or "0.80")
+    max_price = float(os.environ.get("NOTIFY_FAV_MAX_PRICE", "0.91") or "0.91")
+    min_size = float(os.environ.get("NOTIFY_FAV_MIN_SIZE", "5") or "5")
+    max_days_raw = os.environ.get("NOTIFY_MAX_DAYS", "2").strip()
+    max_days = float(max_days_raw) if max_days_raw else 2.0
+    try:
+        if demo:
+            from .demo import load_demo_favorites
+
+            bets = load_demo_favorites(
+                min_price=min_price, max_price=max_price,
+                min_size=min_size, max_days=max_days,
+            )
+            meta = {"source": "demo"}
+        else:
+            from .client import PolymarketClient
+            from .favorites import build_favorites_live
+
+            bets = build_favorites_live(
+                PolymarketClient(), min_price=min_price, max_price=max_price,
+                min_size=min_size, max_days=max_days,
+            )
+            meta = {"source": "live"}
+    except Exception as exc:  # noqa: BLE001 - never alert on a failed scan
+        return _empty_payload({"source": "error", "error": str(exc)[:200]})
+
+    payload = _empty_payload(meta)
+    payload["favorites"] = [favorite_to_dict(b) for b in bets]
+    return payload
 
 
 def build_world_cup_payload(demo: bool = False) -> dict:
@@ -525,6 +616,12 @@ def main() -> int:  # pragma: no cover - orchestration, exercised via the workfl
         payload = build_world_cup_payload(demo=demo)
         if payload.get("meta", {}).get("source") == "error":
             print(f"world cup scan unavailable ({payload['meta'].get('error')}); "
+                  "no notification sent.")
+            return 0
+    elif mode == "favorites":
+        payload = build_favorites_payload(demo=demo)
+        if payload.get("meta", {}).get("source") == "error":
+            print(f"favorites scan unavailable ({payload['meta'].get('error')}); "
                   "no notification sent.")
             return 0
     else:
