@@ -192,6 +192,46 @@ class TestRealismRendering(unittest.TestCase):
         self.assertIn("$1 → 약 $1.04 가치", text)
 
 
+class TestResolutionWindow(unittest.TestCase):
+    def _payload(self, kind, end_date):
+        return {
+            "polymarket": [
+                {"market_id": "p1", "kind": kind, "question": "Q?", "edge_pct": 2.0,
+                 "total_edge": 5, "annualized_pct": None if kind == "MINT_SELL" else 50.0,
+                 "end_date": end_date},
+            ],
+            "cross_venue": [], "ev": [], "meta": {"source": "live"},
+        }
+
+    def test_near_dated_buy_set_passes(self):
+        from datetime import datetime, timedelta, timezone
+        soon = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+        text, _ = compute_notification(self._payload("BUY_SET", soon), [], max_days_to_resolution=2)
+        self.assertIsNotNone(text)
+
+    def test_far_dated_buy_set_filtered_out(self):
+        from datetime import datetime, timedelta, timezone
+        far = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+        text, _ = compute_notification(self._payload("BUY_SET", far), [], max_days_to_resolution=2)
+        self.assertIsNone(text)  # resolves in 30 days -> dropped
+
+    def test_mint_sell_kept_even_if_far_dated(self):
+        from datetime import datetime, timedelta, timezone
+        far = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat()
+        text, _ = compute_notification(self._payload("MINT_SELL", far), [], max_days_to_resolution=2)
+        self.assertIsNotNone(text)  # instant settle -> window doesn't apply
+
+    def test_unknown_date_dropped_when_window_active(self):
+        text, _ = compute_notification(self._payload("BUY_SET", None), [], max_days_to_resolution=2)
+        self.assertIsNone(text)  # can't promise "within N days" without a date
+
+    def test_no_window_keeps_everything(self):
+        from datetime import datetime, timedelta, timezone
+        far = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat()
+        text, _ = compute_notification(self._payload("BUY_SET", far), [])  # max_days=None
+        self.assertIsNotNone(text)
+
+
 class TestResolutionEta(unittest.TestCase):
     NOW = datetime(2026, 6, 24, tzinfo=timezone.utc)
 

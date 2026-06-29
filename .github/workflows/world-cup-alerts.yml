@@ -54,6 +54,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           NOTIFY_WC_MIN_EDGE: "0.10"   # +10% value vs consensus ("$1 -> ~$1.10")
+          NOTIFY_MAX_DAYS: "2"         # only matches resolving within 2 days (near-dated focus)
           # Optional: one-line Gemini context note on each alert (off if no key).
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_ENRICH: "1"
