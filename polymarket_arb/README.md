@@ -299,6 +299,23 @@ The value math reuses the de-vig/EV engine (`ev.py` + `sports_value.py`):
 `world_cup_match_odds` (h2h) → de-vig per match → compare each team/Draw leg of
 the matched Polymarket market to its price.
 
+## Near-resolution favorites ("$1 → ~$1.1 if it wins")
+
+`NOTIFY_MODE=favorites` (workflow: `favorites-alerts.yml`) pushes **any**
+Polymarket market — not just sports — that **settles within `NOTIFY_MAX_DAYS`**
+and has an outcome priced in the favorite band (`NOTIFY_FAV_MIN_PRICE` …
+`NOTIFY_FAV_MAX_PRICE`). Buying at price `p` returns $1 if it wins, so the payout
+is `1/p`; the default `0.91` ceiling is the "$1 → ~$1.10" line, and the `0.80`
+floor keeps out coin-flips and longshots.
+
+**This is NOT arbitrage and NOT an edge.** The price *is* the market's implied
+probability, so an 88¢ favorite is just ~88% likely — you earn ~14% if it lands
+and lose the whole stake if it doesn't. It's the opposite trade-off from the arb
+scanner (which seeks a *guaranteed* $1 but almost never finds a full 10%): this
+one is likely, soon, small, and risked. Each alert says so, and shows the payout,
+the market-implied win probability, and the time to settlement. Pure Polymarket
+data — needs only the Telegram secrets, no odds-API key. See `favorites.py`.
+
 ## Gemini: a plain-language analyst (not the oracle)
 
 Gemini is wired in as an **explanation / query layer over the real numbers** —

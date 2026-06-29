@@ -21,6 +21,9 @@ _WORLD_CUP_FIXTURE = os.path.join(
 _WORLD_CUP_MATCHES_FIXTURE = os.path.join(
     os.path.dirname(__file__), "fixtures", "demo_world_cup_matches.json"
 )
+_FAVORITES_FIXTURE = os.path.join(
+    os.path.dirname(__file__), "fixtures", "demo_favorites.json"
+)
 
 
 def _level(raw: Optional[list]) -> Optional[Level]:
@@ -149,3 +152,36 @@ def load_demo_world_cup_matches(
     sets = [_poly_set_from_entry(e) for e in data.get("polymarket", [])]
     matches = data.get("matches", [])
     return scan_world_cup_match_value(sets, matches, min_edge=min_edge)
+
+
+def load_demo_favorites(
+    path: str = _FAVORITES_FIXTURE,
+    *,
+    min_price: float = 0.80,
+    max_price: float = 0.91,
+    min_size: float = 1.0,
+    max_days: float = 2.0,
+    now=None,
+):
+    """Build near-resolution favorites from the offline demo fixture.
+
+    Fixture end dates are relative (``days_from_now``) so the demo stays valid
+    regardless of when it runs — converted to ISO dates against ``now`` here.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from .favorites import find_favorites
+
+    now = now or datetime.now(timezone.utc)
+    data = _load_cross_fixture(path)
+    sets = []
+    for entry in data.get("polymarket", []):
+        cs = _poly_set_from_entry(entry)
+        offset = entry.get("days_from_now")
+        if offset is not None:
+            cs.end_date = (now + timedelta(days=float(offset))).isoformat()
+        sets.append(cs)
+    return find_favorites(
+        sets, min_price=min_price, max_price=max_price,
+        min_size=min_size, max_days=max_days, now=now,
+    )

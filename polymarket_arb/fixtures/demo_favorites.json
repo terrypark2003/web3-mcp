@@ -1,0 +1,21 @@
+{
+  "_comment": "Synthetic 'near-resolution favorites' for the offline demo. end dates are relative (days_from_now) so the demo stays valid over time. With band [0.80,0.91] and a 2-day window, only fav-rain qualifies: fav-pricey is too expensive (0.97 -> payout < 1.1x) and fav-far resolves in 10 days.",
+  "polymarket": [
+    {"market_id": "fav-rain", "question": "Will it rain in NYC tomorrow?", "days_from_now": 1,
+     "url": "https://polymarket.com/event/rain-nyc-tomorrow",
+     "legs": [
+       {"token_id": "r-y", "outcome": "Yes", "ask": [0.88, 300], "bid": [0.86, 300]},
+       {"token_id": "r-n", "outcome": "No", "ask": [0.13, 300], "bid": [0.11, 300]}
+     ]},
+    {"market_id": "fav-pricey", "question": "Near-certain (too pricey to pay 1.1x)?", "days_from_now": 1,
+     "legs": [
+       {"token_id": "p-y", "outcome": "Yes", "ask": [0.97, 300], "bid": [0.96, 300]},
+       {"token_id": "p-n", "outcome": "No", "ask": [0.04, 300], "bid": [0.03, 300]}
+     ]},
+    {"market_id": "fav-far", "question": "Favorite but resolves in 10 days?", "days_from_now": 10,
+     "legs": [
+       {"token_id": "f-y", "outcome": "Yes", "ask": [0.85, 300], "bid": [0.83, 300]},
+       {"token_id": "f-n", "outcome": "No", "ask": [0.16, 300], "bid": [0.14, 300]}
+     ]}
+  ]
+}
