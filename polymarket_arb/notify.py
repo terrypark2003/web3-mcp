@@ -102,6 +102,38 @@ def _resolution_eta(end_date, now: Optional[datetime] = None) -> Optional[str]:
     return f"정산까지 약 {max(1, round(secs / 60))}분"
 
 
+def _days_until(end_date, now: Optional[datetime] = None) -> Optional[float]:
+    """Days from ``now`` until ``end_date`` (negative if past); None if unknown."""
+    if not end_date:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(end_date).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    return (dt - now).total_seconds() / 86400
+
+
+def _resolves_soon(
+    op: dict, max_days: Optional[float], now: Optional[datetime] = None
+) -> bool:
+    """Keep an op only if it settles within ``max_days`` (or is instant).
+
+    ``MINT_SELL`` pays back the moment you sell, so it never waits on resolution
+    and always passes. Held positions (BUY_SET / cross / EV / World Cup) pass
+    only when a known resolution date falls inside the window — an unknown date
+    is dropped, since "resolves within N days" can't be promised without one.
+    """
+    if max_days is None:
+        return True
+    if op.get("kind") == "MINT_SELL":
+        return True
+    d = _days_until(op.get("end_date"), now)
+    return d is not None and 0 <= d <= max_days
+
+
 def _cents(price) -> str:
     """Polymarket-style cents for a 0–1 share price (matches the buy buttons)."""
     try:
@@ -225,6 +257,7 @@ def compute_notification(
     include_ev: bool = False,
     min_edge_pct: float = 0.0,
     min_confidence: float = 0.0,
+    max_days_to_resolution: Optional[float] = None,
 ) -> tuple[Optional[str], list]:
     """Return (message_or_None, new_seen_keys) given a payload and prior state.
 
@@ -234,15 +267,26 @@ def compute_notification(
     ``min_confidence`` drops risk-free ops below a realism score (0-100) so the
     feed shows executable money, not paper edges. Ops without a score (legacy
     payloads) default to 0 and pass only when ``min_confidence`` is 0.
+
+    ``max_days_to_resolution`` keeps only opportunities that settle within that
+    many days (instant ``MINT_SELL`` always passes) — for focusing on near-dated
+    edges where capital isn't locked up. ``None`` disables the window.
     """
     poly = [
         o for o in payload.get("polymarket", [])
         if o.get("edge_pct", 0) >= min_edge_pct
         and o.get("confidence", 0) >= min_confidence
+        and _resolves_soon(o, max_days_to_resolution)
     ]
-    cross = [o for o in payload.get("cross_venue", []) if o.get("edge_pct", 0) >= min_edge_pct]
-    ev = payload.get("ev", []) if include_ev else []
-    world_cup = payload.get("world_cup", [])  # always included when present
+    cross = [
+        o for o in payload.get("cross_venue", [])
+        if o.get("edge_pct", 0) >= min_edge_pct
+        and _resolves_soon(o, max_days_to_resolution)
+    ]
+    ev = [o for o in (payload.get("ev", []) if include_ev else [])
+          if _resolves_soon(o, max_days_to_resolution)]
+    world_cup = [o for o in payload.get("world_cup", [])
+                 if _resolves_soon(o, max_days_to_resolution)]
 
     current: dict[tuple, tuple] = {}
     for op in poly:
@@ -492,10 +536,12 @@ def main() -> int:  # pragma: no cover - orchestration, exercised via the workfl
     include_ev = os.environ.get("NOTIFY_INCLUDE_EV", "").lower() in ("1", "true", "yes")
     min_edge = float(os.environ.get("NOTIFY_MIN_EDGE_PCT", "0") or "0")
     min_conf = float(os.environ.get("NOTIFY_MIN_CONFIDENCE", "0") or "0")
+    max_days_raw = os.environ.get("NOTIFY_MAX_DAYS", "").strip()
+    max_days = float(max_days_raw) if max_days_raw else None
 
     text, new_seen = compute_notification(
         payload, load_state(), include_ev=include_ev, min_edge_pct=min_edge,
-        min_confidence=min_conf,
+        min_confidence=min_conf, max_days_to_resolution=max_days,
     )
     save_state(new_seen)
 

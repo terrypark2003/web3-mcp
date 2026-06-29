@@ -50,4 +50,5 @@ jobs:
           NOTIFY_DEMO: ${{ (github.event_name == 'workflow_dispatch' && inputs.demo) && '1' || '' }}
           NOTIFY_MIN_EDGE_PCT: "0"
           NOTIFY_INCLUDE_EV: ""
+          NOTIFY_MAX_DAYS: "2"   # only edges resolving within 2 days (MINT_SELL is instant, always kept)
         run: python -m polymarket_arb.notify

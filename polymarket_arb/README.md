@@ -331,6 +331,14 @@ re-pinged about the same edge; a vanished-then-reappeared edge re-fires. EV is
 off by default (`NOTIFY_INCLUDE_EV=1` to include it). The notifier never sends
 demo data as a real alert — if a live scan fails it sends nothing.
 
+Filters (env vars on the workflow step):
+- `NOTIFY_MIN_EDGE_PCT` — minimum edge percent.
+- `NOTIFY_MIN_CONFIDENCE` — minimum realism score (0–100); drops paper edges.
+- `NOTIFY_MAX_DAYS` — only alert on ops resolving within this many days, so you
+  focus on **near-dated** edges where capital isn't locked up (default `2` in
+  the bundled workflows). Instant `MINT_SELL` always passes; held ops with an
+  unknown resolution date are dropped while this window is active.
+
 ## Layout
 
 ```
