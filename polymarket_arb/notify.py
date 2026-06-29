@@ -440,30 +440,32 @@ def _empty_payload(meta: dict) -> dict:
 
 
 def build_world_cup_payload(demo: bool = False) -> dict:
-    """World Cup value bets vs bookmaker consensus, in the notification shape.
+    """Per-MATCH World Cup value bets vs bookmaker consensus, in alert shape.
 
-    Demo uses the bundled fixture. Live needs ODDS_API_KEY; any failure (no key,
-    egress, API change) returns a ``meta.source == "error"`` payload so the
-    caller can skip sending rather than alert on bad data.
+    These are near-dated (settle right after the match), so they pair with the
+    ``NOTIFY_MAX_DAYS`` window — unlike the tournament-outright path, which
+    settles only at the final. Demo uses the bundled fixture. Live needs
+    ODDS_API_KEY; any failure (no key, egress, API change) returns a
+    ``meta.source == "error"`` payload so the caller skips sending bad data.
     """
     from .scanner import ev_to_dict
 
+    min_edge = float(os.environ.get("NOTIFY_WC_MIN_EDGE", "0.05") or "0.05")
     try:
         if demo:
-            from .demo import load_demo_world_cup
+            from .demo import load_demo_world_cup_matches
 
-            ops = load_demo_world_cup()
+            ops = load_demo_world_cup_matches(min_edge=min_edge)
             meta = {"source": "demo"}
         else:
             key = os.environ.get("ODDS_API_KEY")
             if not key:
                 return _empty_payload({"source": "error", "error": "ODDS_API_KEY not set"})
             from .client import PolymarketClient
-            from .multivenue import scan_world_cup_value_live
+            from .multivenue import scan_world_cup_match_value_live
             from .odds_api import OddsApiClient
 
-            min_edge = float(os.environ.get("NOTIFY_WC_MIN_EDGE", "0.03") or "0.03")
-            ops = scan_world_cup_value_live(
+            ops = scan_world_cup_match_value_live(
                 PolymarketClient(), OddsApiClient(key), min_edge=min_edge
             )
             meta = {"source": "live"}

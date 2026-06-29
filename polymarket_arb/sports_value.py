@@ -20,10 +20,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .ev import EVOpportunity, fair_value_from_map, scan_ev
+from .ev import EV_SIGNAL, EVOpportunity, fair_value_from_map, scan_ev
 from .models import CompleteSet
 
 WORLD_CUP_KEYWORDS = ("world cup",)
+DRAW_FORMS = {"draw", "tie", "x"}  # how a drawn-match outcome is labelled
 
 # Surface form -> canonical team name. Best-effort; extend as needed.
 _ALIASES = {
@@ -126,3 +127,104 @@ def scan_world_cup_value(
     ]
     fair = fair_value_from_map(world_cup_fair_value(wc, fair_by_team))
     return scan_ev(wc, fair, fees=None, min_ev=min_edge, min_size=min_size)
+
+
+# --------------------------------------------------------------------------- #
+# Per-match value (h2h) — the near-dated "games in the next day or two" path
+# --------------------------------------------------------------------------- #
+#
+# The outright path above is tournament-long (settles at the final). For a
+# market that resolves within a day or two you need per-MATCH value: take a
+# match's home/draw/away bookmaker odds, de-vig them into fair probabilities,
+# and compare each to the Polymarket price for that same outcome.
+
+
+def _team_in_question(question: str, team_norm: str) -> bool:
+    """Does any surface form of ``team_norm`` appear in the market question?"""
+    return any(form in question for form in _surface_forms(team_norm))
+
+
+def _leg_fair_prob(
+    outcome: str, home_norm: str, away_norm: str, fair: dict[str, float]
+) -> Optional[float]:
+    """Fair probability for one Polymarket leg of a match market, or None.
+
+    Handles team-named legs (moneyline / 3-way) and an explicit Draw. ``Yes``/
+    ``No`` legs are skipped — which team a binary "Will X win?" refers to can't
+    be resolved reliably when both teams are named, so we don't guess.
+    """
+    o = normalize_team(outcome)
+    if o in DRAW_FORMS:
+        return fair.get("draw")
+    if o == home_norm:
+        return fair.get(home_norm)
+    if o == away_norm:
+        return fair.get(away_norm)
+    return None
+
+
+def scan_world_cup_match_value(
+    poly_sets,
+    matches: list,
+    min_edge: float = 0.05,
+    min_size: float = 1.0,
+) -> list[EVOpportunity]:
+    """Positive-value per-match bets: Polymarket price vs de-vigged match odds.
+
+    ``poly_sets`` are Polymarket per-match markets (legs labelled by team or
+    Draw). ``matches`` is the odds-API output from ``match_prices_from_events``:
+    one entry per game with ``home``/``away`` and a ``prices`` table. A set is
+    paired to a match when both team names appear in its question; then each leg
+    whose fair probability beats its ask by ``min_edge`` is surfaced.
+    """
+    parsed = []
+    for m in matches:
+        fair = consensus_fair_probs(m.get("prices", {}))  # de-vig within the match
+        if not fair:
+            continue
+        parsed.append((
+            normalize_team(m.get("home", "")),
+            normalize_team(m.get("away", "")),
+            fair,
+        ))
+
+    out: list[EVOpportunity] = []
+    for cs in poly_sets:
+        q = (cs.question or "").lower()
+        pair = next(
+            (
+                (home, away, fair)
+                for home, away, fair in parsed
+                if home and away
+                and _team_in_question(q, home) and _team_in_question(q, away)
+            ),
+            None,
+        )
+        if pair is None:
+            continue
+        home, away, fair = pair
+        for leg in cs.legs:
+            if leg.best_ask is None or leg.best_ask.size < min_size:
+                continue
+            p = _leg_fair_prob(leg.outcome, home, away, fair)
+            if p is None:
+                continue
+            ev = p - leg.best_ask.price
+            if ev < min_edge:
+                continue
+            out.append(EVOpportunity(
+                kind=EV_SIGNAL,
+                market_id=cs.market_id,
+                question=cs.question,
+                venue=cs.venue,
+                side=leg.outcome,
+                price=leg.best_ask.price,
+                fair_prob=p,
+                ev_per_contract=ev,
+                edge_pct=(ev / leg.best_ask.price * 100) if leg.best_ask.price > 0 else 0.0,
+                max_size=leg.best_ask.size,
+                end_date=cs.end_date,
+                url=cs.url,
+            ))
+    out.sort(key=lambda o: o.ev_per_contract, reverse=True)
+    return out

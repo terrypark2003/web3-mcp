@@ -22,7 +22,8 @@ from typing import Optional
 import requests
 
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
-WORLD_CUP_WINNER = "soccer_fifa_world_cup_winner"
+WORLD_CUP_WINNER = "soccer_fifa_world_cup_winner"   # outright tournament winner
+WORLD_CUP_MATCHES = "soccer_fifa_world_cup"         # individual matches (h2h)
 
 
 class OddsApiClient:
@@ -57,6 +58,21 @@ class OddsApiClient:
         events = self._odds(WORLD_CUP_WINNER, markets="outrights")
         return prices_by_team_from_events(events, market_key="outrights")
 
+    def world_cup_match_odds(self) -> list[dict]:
+        """Per-match head-to-head odds for upcoming/live World Cup games.
+
+        Returns one dict per match::
+
+            {"home": "Argentina", "away": "Mexico",
+             "commence_time": "2026-06-30T18:00:00Z",
+             "prices": {"Argentina": [1.8, ...], "Draw": [3.6, ...], "Mexico": [...]}}
+
+        Unlike the outright winner, these markets settle right after the match —
+        the near-dated value the alerts are meant to surface.
+        """
+        events = self._odds(WORLD_CUP_MATCHES, markets="h2h")
+        return match_prices_from_events(events, market_key="h2h")
+
 
 def prices_by_team_from_events(events: list, market_key: str) -> dict[str, list[float]]:
     """Flatten The Odds API events into {outcome_name: [decimal prices]}.
@@ -79,3 +95,36 @@ def prices_by_team_from_events(events: list, market_key: str) -> dict[str, list[
                     except (TypeError, ValueError):
                         continue
     return dict(prices)
+
+
+def match_prices_from_events(events: list, market_key: str = "h2h") -> list[dict]:
+    """Flatten The Odds API h2h events into per-match price tables.
+
+    Pure parser (tested offline against captured fixtures). One entry per event,
+    each with ``home``/``away``/``commence_time`` and a ``prices`` map of
+    {outcome_name: [decimal prices across books]} (outcome is a team or "Draw").
+    """
+    out: list[dict] = []
+    for event in events or []:
+        prices: dict[str, list[float]] = defaultdict(list)
+        for book in event.get("bookmakers", []) or []:
+            for market in book.get("markets", []) or []:
+                if market_key and market.get("key") != market_key:
+                    continue
+                for outcome in market.get("outcomes", []) or []:
+                    name = outcome.get("name")
+                    price = outcome.get("price")
+                    if name is None or price is None:
+                        continue
+                    try:
+                        prices[str(name)].append(float(price))
+                    except (TypeError, ValueError):
+                        continue
+        if prices:
+            out.append({
+                "home": event.get("home_team"),
+                "away": event.get("away_team"),
+                "commence_time": event.get("commence_time"),
+                "prices": dict(prices),
+            })
+    return out

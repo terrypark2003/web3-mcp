@@ -103,6 +103,52 @@ def scan_world_cup_value_live(
     return scan_world_cup_value(sets, prices, min_edge=min_edge, min_size=min_size)
 
 
+def scan_world_cup_match_value_live(
+    poly_client,
+    odds_client,
+    min_edge: float = 0.05,
+    min_size: float = 1.0,
+) -> list[EVOpportunity]:
+    """Live per-match World Cup value: Polymarket match markets vs h2h consensus.
+
+    Fetches the upcoming/live match odds first, then keeps only Polymarket
+    markets whose question names two of the teams playing (a match market) and
+    attaches their books. These markets settle right after the match, so they
+    are the near-dated value the alerts target.
+    """
+    from .sports_value import (
+        _team_in_question,
+        normalize_team,
+        scan_world_cup_match_value,
+    )
+
+    matches = odds_client.world_cup_match_odds()
+    if not matches:
+        return []
+
+    teams = set()
+    for m in matches:
+        for side in (m.get("home"), m.get("away")):
+            if side:
+                teams.add(normalize_team(side))
+
+    candidates = []
+    for market in poly_client.active_markets():
+        q = str(market.get("question", "")).lower()
+        if sum(1 for t in teams if _team_in_question(q, t)) >= 2:
+            candidates.append(market)
+
+    token_ids: list[str] = []
+    for market in candidates:
+        token_ids.extend(str(t) for t in _maybe_json_list(market.get("clobTokenIds")))
+    books = poly_client.order_books(token_ids)
+    sets = [
+        cs for cs in (complete_set_from_market(m, books) for m in candidates)
+        if cs is not None
+    ]
+    return scan_world_cup_match_value(sets, matches, min_edge=min_edge, min_size=min_size)
+
+
 def scan_ev_live(
     poly_client,
     fair: FairValue,
