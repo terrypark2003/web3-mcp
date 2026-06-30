@@ -29,9 +29,10 @@ from .scanner import cross_to_dict, ev_to_dict, opportunity_to_dict
 
 HELP = (
     "예측시장 봇 (소유자 전용)\n"
-    "💵 /fav1 /fav3 /fav6 /fav9 /fav12 — 해당 시간 내 정산되는 "
+    "🔗 /fav1 /fav3 /fav6 /fav9 /fav12 — 해당 시간 내 정산되는 "
     "$1→약 $1.05~$1.15 '유력후보' 5개를 임박 순으로 보여줍니다. "
-    "각 항목의 [💵 $1 매수] 버튼으로 바로 매수 (기본 dry-run).\n"
+    "각 항목의 [🔗 폴리마켓에서 매수] 버튼을 누르면 그 마켓이 열려요 — "
+    "거기서 직접 매수하세요 (V2 이후 API 자동매수는 폴리마켓이 막아둠).\n"
     "\n"
     "명령어:\n"
     "/fav1 - 1시간 내 정산 유력후보 (가장 임박)\n"
@@ -204,9 +205,16 @@ class ArbBot:
         """On-demand: the ``limit`` soonest-resolving favorites within ``max_hours``.
 
         Returns ``[(message, button_rows)]`` — a single Telegram message with up
-        to ``limit`` numbered items (soonest first), a matching numbered buy
-        button per item, and the time-to-resolution on every line. NOT deduped.
-        Empty list if none qualify.
+        to ``limit`` numbered items (soonest first), a matching numbered link
+        button per item (opens the market on Polymarket to buy manually), and the
+        time-to-resolution on every line. NOT deduped. Empty list if none qualify.
+
+        NOTE: the button opens the market instead of auto-buying. Polymarket's
+        CLOB V2 (2026-04-28) requires the "deposit wallet flow" and rejects
+        programmatic orders from email/Magic and plain-EOA makers alike
+        ("maker address not allowed"), so API auto-execution is unavailable. The
+        buy engine (build_single_buy_plan / handle_callback) is kept for if/when
+        that's fixed; the link is the working path today.
         """
         if self.fav_scan_fn is None:
             return []
@@ -221,19 +229,25 @@ class ArbBot:
         if not top:
             return []
 
-        lines = [f"💵 {max_hours:g}시간 내 유력후보 (무위험 아님 — 번호 버튼으로 $1 매수):"]
+        lines = [
+            f"🔗 {max_hours:g}시간 내 유력후보 (무위험 아님 — 버튼을 누르면 "
+            f"폴리마켓에서 열려요, 거기서 직접 매수):"
+        ]
         rows = []
         for i, (hours, f) in enumerate(top, start=1):
             self._fav_counter += 1
             ref = f"f:{self._fav_counter}"
-            self._fav_offered[ref] = f
+            self._fav_offered[ref] = f  # kept for the (disabled) auto-buy path
             payout = (1.0 / f.price) if f.price else 0.0
             cents = f.price * 100
             lines.append(
                 f"{i}) {f.question[:38]} — {f.outcome[:12]} {cents:.0f}¢ "
                 f"($1→약 ${payout:.2f}, ⏳ {hours:.1f}시간 남음)"
             )
-            rows.append([(f"{i}) 💵 $1 매수 — {f.outcome[:10]} {cents:.0f}¢", ref)])
+            market_url = f.url or "https://polymarket.com/markets"
+            rows.append([(
+                f"{i}) 🔗 폴리마켓에서 매수 — {f.outcome[:10]} {cents:.0f}¢", market_url,
+            )])
         lines.append("⚠️ 무위험 아님: 적중 시 소액 이익, 빗나가면 전액 손실.")
         return [("\n".join(lines), rows)]
 

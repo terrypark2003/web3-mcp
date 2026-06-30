@@ -60,7 +60,7 @@ class TestFavoritesNow(unittest.TestCase):
         self.assertIn("무위험 아님", msg)
         self.assertEqual(len(rows), 1)
         label, data = rows[0][0]
-        self.assertTrue(data.startswith("f:"))
+        self.assertTrue(data.startswith("http"))     # opens the market (manual buy)
         self.assertTrue(label.startswith("1)"))
 
     def test_limits_to_five(self):
@@ -90,6 +90,15 @@ class TestFavoritesNow(unittest.TestCase):
         bot = make_bot([fav(hours=2.0)])
         self.assertTrue(bot.favorites_now())
         self.assertTrue(bot.favorites_now())  # on-demand: lists again, not deduped
+
+    def test_button_opens_market_url(self):
+        # CLOB V2 blocks API auto-buy, so the button must be a link to the market.
+        bot = make_bot([fav(hours=2.0)])             # fav() url = polymarket event link
+        msg, rows = bot.favorites_now()[0]
+        label, value = rows[0][0]
+        self.assertEqual(value, "https://polymarket.com/event/x")  # opens that market
+        self.assertIn("폴리마켓에서 매수", label)      # wording = manual buy on Polymarket
+        self.assertIn("직접 매수", msg)               # header explains the link flow
 
 
 class TestBalance(unittest.TestCase):
@@ -208,8 +217,8 @@ class TestBuyCallback(unittest.TestCase):
 
     def test_tap_stages_then_confirm_executes_dry_run(self):
         bot = make_bot([fav(outcome="Yes", price=0.92)])
-        rows = bot.favorites_now()[0][1]
-        ref = rows[0][0][1]                          # callback_data like "f:1"
+        bot.favorites_now()                          # registers f:1 (engine kept alive)
+        ref = "f:1"                                  # auto-buy path still works if wired
         staged, buttons = bot.handle_callback(OWNER, ref)
         self.assertIn("드라이런", staged)             # shows what would be sent
         self.assertIn("무위험 아님", staged)
@@ -222,8 +231,8 @@ class TestBuyCallback(unittest.TestCase):
 
     def test_cancel_clears_pending(self):
         bot = make_bot([fav()])
-        rows = bot.favorites_now()[0][1]
-        bot.handle_callback(OWNER, rows[0][0][1])
+        bot.favorites_now()                          # registers f:1
+        bot.handle_callback(OWNER, "f:1")
         self.assertIn(OWNER, bot._pending)
         reply, _ = bot.handle_callback(OWNER, "fav_cancel")
         self.assertIn("취소", reply)
