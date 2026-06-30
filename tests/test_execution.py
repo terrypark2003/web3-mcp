@@ -70,7 +70,15 @@ class TestExecutionConfig(unittest.TestCase):
         cfg = ExecutionConfig.from_env({"EXECUTION_MODE": "live"})
         ready, missing = cfg.live_ready()
         self.assertFalse(ready)
-        self.assertIn("POLYMARKET_API_KEY", missing)
+        # Only the signing key is strictly required; L2 creds derive from it.
+        self.assertEqual(missing, ["POLYMARKET_PRIVATE_KEY"])
+
+    def test_live_ready_true_with_only_private_key(self):
+        cfg = ExecutionConfig.from_env({
+            "EXECUTION_MODE": "live", "POLYMARKET_PRIVATE_KEY": "0xabc",
+        })
+        self.assertEqual(cfg.live_ready(), (True, []))   # creds derived at connect
+        self.assertFalse(cfg.has_explicit_api_creds)
 
     def test_live_ready_true_with_all_creds(self):
         cfg = ExecutionConfig.from_env({

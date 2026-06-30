@@ -66,10 +66,9 @@ fly secrets set \
 fly deploy
 fly logs                                    # watch it
 
-# 5. Go live (auto-redeploys on secret change)
-fly secrets set EXECUTION_MODE=live MAX_STAKE_USDC=1 \
-  POLYMARKET_PRIVATE_KEY=... \
-  POLYMARKET_API_KEY=... POLYMARKET_API_SECRET=... POLYMARKET_API_PASSPHRASE=...
+# 5. Go live (auto-redeploys on secret change) — only the private key is needed;
+#    the L2 API creds derive from it automatically.
+fly secrets set EXECUTION_MODE=live MAX_STAKE_USDC=1 POLYMARKET_PRIVATE_KEY=0x...
 ```
 
 Keep it to one always-on machine: `fly scale count 1`.
@@ -81,17 +80,27 @@ Keep it to one always-on machine: `fly scale count 1`.
 Add these only when you're ready for real orders (Polymarket account funded with
 USDC on Polygon):
 
-| Variable | What |
-|---|---|
-| `EXECUTION_MODE` | `live` |
-| `MAX_STAKE_USDC` | `1` (per-trade cap) |
-| `POLYMARKET_PRIVATE_KEY` | signing wallet key — **dedicated wallet, small funds** |
-| `POLYMARKET_API_KEY` / `_API_SECRET` / `_API_PASSPHRASE` | Polymarket L2 API creds |
-| `POLYMARKET_FUNDER` | proxy/funder address (only if using a proxy wallet) |
+| Variable | What | Required? |
+|---|---|---|
+| `EXECUTION_MODE` | `live` | yes |
+| `MAX_STAKE_USDC` | `1` (per-trade cap) | recommended |
+| `POLYMARKET_PRIVATE_KEY` | signing wallet key — **dedicated wallet, small funds** | **yes** |
+| `POLYMARKET_FUNDER` | proxy/funder address (only if you use a Polymarket proxy wallet) | if proxy |
+| `POLYMARKET_API_KEY` / `_API_SECRET` / `_API_PASSPHRASE` | L2 API creds | **no — auto-derived** |
 
-The L2 API creds are derived from your wallet key via `py-clob-client`
-(`create_or_derive_api_creds`). Ask me and I'll add a one-off `make-creds`
-script that prints them from `POLYMARKET_PRIVATE_KEY`.
+**You only need `POLYMARKET_PRIVATE_KEY`.** The three L2 API creds are *not*
+found in any UI — they're derived from the key. The bot does that for you on
+connect, so you can leave them blank. (If you'd rather set them explicitly, run
+`POLYMARKET_PRIVATE_KEY=0x... python scripts/make_creds.py` once and paste its
+output.)
+
+### Where the private key comes from
+- **External wallet (MetaMask etc.):** export the private key from the wallet
+  (e.g. MetaMask → Account details → Show private key).
+- **Polymarket email/Magic account:** Polymarket → wallet/settings → **Export
+  private key**.
+- **Use a dedicated wallet** funded with only the USDC you intend to trade —
+  never your main wallet. Never commit or share the key.
 
 ---
 

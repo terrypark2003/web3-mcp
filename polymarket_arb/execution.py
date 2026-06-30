@@ -191,15 +191,19 @@ class ExecutionConfig:
         )
 
     def live_ready(self) -> tuple[bool, list[str]]:
-        """Whether live trading has every credential it needs (no secrets logged)."""
-        required = {
-            "POLYMARKET_API_KEY": self.api_key,
-            "POLYMARKET_API_SECRET": self.api_secret,
-            "POLYMARKET_API_PASSPHRASE": self.api_passphrase,
-            "POLYMARKET_PRIVATE_KEY": self.private_key,
-        }
-        missing = [name for name, value in required.items() if not value]
+        """Whether live trading has what it needs (no secrets logged).
+
+        Only the signing key (`POLYMARKET_PRIVATE_KEY`) is required — the L2 API
+        creds (api_key/secret/passphrase) are *derived from that key* at connect
+        time if not supplied, so you don't have to hunt them down. Supplying them
+        explicitly still works and skips the derive call.
+        """
+        missing = [] if self.private_key else ["POLYMARKET_PRIVATE_KEY"]
         return (not missing, missing)
+
+    @property
+    def has_explicit_api_creds(self) -> bool:
+        return bool(self.api_key and self.api_secret and self.api_passphrase)
 
 
 def simulate(plan: OrderPlan, config: ExecutionConfig) -> str:
@@ -242,20 +246,25 @@ class PolymarketExecutor:
                 "py-clob-client not installed (pip install -r requirements-bot.txt)"
             ) from exc
 
-        creds = ApiCreds(
-            api_key=self.config.api_key,
-            api_secret=self.config.api_secret,
-            api_passphrase=self.config.api_passphrase,
-        )
         # NOTE: signature_type / funder depend on whether you trade from an EOA
         # or a Polymarket proxy wallet. VALIDATE against your account setup.
-        self._client = ClobClient(
+        client = ClobClient(
             host=self.config.clob_host,
             key=self.config.private_key,
             chain_id=137,
-            creds=creds,
             funder=self.config.funder,
         )
+        if self.config.has_explicit_api_creds:
+            client.set_api_creds(ApiCreds(
+                api_key=self.config.api_key,
+                api_secret=self.config.api_secret,
+                api_passphrase=self.config.api_passphrase,
+            ))
+        else:
+            # Derive (or create) the L2 API creds from the signing key — one
+            # network call, so the user only has to provide the private key.
+            client.set_api_creds(client.create_or_derive_api_creds())
+        self._client = client
         return self._client
 
     def execute(self, plan: OrderPlan) -> ExecutionResult:
