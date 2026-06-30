@@ -51,36 +51,40 @@ class TestSingleBuyPlan(unittest.TestCase):
 
 
 class TestFavoritesNow(unittest.TestCase):
-    def test_returns_message_buttons_and_eta(self):
+    def test_one_message_with_eta(self):
         bot = make_bot([fav(outcome="Yes", price=0.92, hours=2.0)])
         chunks = bot.favorites_now()
-        self.assertEqual(len(chunks), 1)
+        self.assertEqual(len(chunks), 1)             # always a single message
         msg, rows = chunks[0]
-        self.assertIn("3시간", msg)        # ≤3h bucket header
-        self.assertIn("⏳2.0h", msg)        # ETA shown
+        self.assertIn("시간 남음", msg)              # ETA always shown
         self.assertIn("무위험 아님", msg)
         self.assertEqual(len(rows), 1)
         label, data = rows[0][0]
         self.assertTrue(data.startswith("f:"))
         self.assertTrue(label.startswith("1)"))
 
-    def test_buckets_by_hours(self):
-        favs = [fav(market_id=f"m{i}", token_id=f"t{i}", hours=h)
-                for i, h in enumerate([2, 5, 8, 11])]
+    def test_limits_to_five(self):
+        favs = [fav(market_id=f"m{i}", token_id=f"t{i}", hours=2.0) for i in range(8)]
         chunks = make_bot(favs).favorites_now()
-        headers = [msg.splitlines()[0] for msg, _ in chunks]
-        self.assertEqual(len(chunks), 4)   # one per bucket
-        self.assertTrue(any("3시간" in h for h in headers))
-        self.assertTrue(any("12시간" in h for h in headers))
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(len(chunks[0][1]), 5)       # only 5, in one message
 
-    def test_chunks_of_five_within_bucket(self):
-        favs = [fav(market_id=f"m{i}", token_id=f"t{i}", hours=2.0) for i in range(7)]
-        chunks = make_bot(favs).favorites_now()  # all in ≤3h -> 5 + 2
-        self.assertEqual([len(rows) for _, rows in chunks], [5, 2])
+    def test_soonest_first(self):
+        favs = [fav(market_id=f"m{i}", token_id=f"t{i}", hours=h)
+                for i, h in enumerate([10, 1, 5])]
+        msg = make_bot(favs).favorites_now()[0][0]
+        first_item = [ln for ln in msg.splitlines() if ln.startswith("1)")][0]
+        self.assertIn("1.0시간", first_item)         # soonest (1h) is item 1
 
     def test_excludes_beyond_12h(self):
-        chunks = make_bot([fav(hours=20.0)]).favorites_now()
-        self.assertEqual(chunks, [])
+        self.assertEqual(make_bot([fav(hours=20.0)]).favorites_now(), [])
+
+    def test_max_hours_window(self):
+        bot = make_bot([fav(hours=2.0)])
+        self.assertEqual(bot.favorites_now(max_hours=1.0), [])  # 2h outside /fav1
+        self.assertTrue(bot.favorites_now(max_hours=3.0))       # inside /fav3
+        # header reflects the window
+        self.assertIn("3시간 내", bot.favorites_now(max_hours=3.0)[0][0])
 
     def test_not_deduped(self):
         bot = make_bot([fav(hours=2.0)])

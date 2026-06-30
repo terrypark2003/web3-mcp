@@ -147,19 +147,27 @@ def main() -> None:
     bot = build_bot()
     app = Application.builder().token(token).build()
 
-    _FAV_CMDS = ("/fav", "/favorites", "/buy")
+    # /favN -> show favorites resolving within N hours (top 5, soonest first).
+    _FAV_WINDOWS = {
+        "/fav1": 1, "/fav3": 3, "/fav6": 6, "/fav9": 9, "/fav12": 12,
+        "/fav": 12, "/favorites": 12,
+    }
 
-    async def _send_favorites(chat_id):  # pragma: no cover - requires Telegram + network
-        await app.bot.send_message(chat_id=chat_id, text="⏳ 12시간 내 유력후보 찾는 중…")
+    async def _send_favorites(chat_id, hours):  # pragma: no cover - Telegram + network
+        await app.bot.send_message(chat_id=chat_id, text=f"⏳ {hours}시간 내 유력후보 찾는 중…")
         # The scan hits the network; run it off the event loop so polling stays live.
-        chunks = await asyncio.to_thread(bot.favorites_now)
+        try:
+            chunks = await asyncio.to_thread(bot.favorites_now, 5, float(hours))
+        except Exception as exc:  # noqa: BLE001 - surface scan errors instead of silence
+            await app.bot.send_message(chat_id=chat_id, text=f"후보 조회 오류: {exc}")
+            return
         if not chunks:
             await app.bot.send_message(
                 chat_id=chat_id,
-                text="지금 조건(가격 0.87~0.95 · 12시간 내 정산)에 맞는 후보가 없어요.",
+                text=f"지금 {hours}시간 내 정산 + 가격 0.87~0.95 조건에 맞는 후보가 없어요.",
             )
             return
-        for message, rows in chunks:  # one message per 5-item group/bucket
+        for message, rows in chunks:
             await app.bot.send_message(
                 chat_id=chat_id, text=message, reply_markup=_keyboard(rows),
             )
@@ -171,11 +179,11 @@ def main() -> None:
             return
         text = message.text or ""
         cmd = text.strip().split()[0].lower() if text.strip() else ""
-        if cmd in _FAV_CMDS:
+        if cmd in _FAV_WINDOWS:
             if not bot.is_authorized(chat.id):
                 await message.reply_text("Unauthorized.")
                 return
-            await _send_favorites(chat.id)
+            await _send_favorites(chat.id, _FAV_WINDOWS[cmd])
             return
         await message.reply_text(bot.handle(chat.id, text))
 
