@@ -82,10 +82,11 @@ def build_bot() -> ArbBot:
 
         return build_favorites_live(
             PolymarketClient(),
-            min_price=float(os.environ.get("NOTIFY_FAV_MIN_PRICE", "0.91") or "0.91"),
+            # payout band 1.05x–1.15x  ->  price 0.87–0.95
+            min_price=float(os.environ.get("NOTIFY_FAV_MIN_PRICE", "0.87") or "0.87"),
             max_price=float(os.environ.get("NOTIFY_FAV_MAX_PRICE", "0.95") or "0.95"),
             min_size=float(os.environ.get("NOTIFY_FAV_MIN_SIZE", "5") or "5"),
-            max_days=float(os.environ.get("NOTIFY_MAX_DAYS", "2") or "2"),
+            max_days=float(os.environ.get("NOTIFY_MAX_DAYS", "1") or "1"),
         )
 
     # Gemini = plain-language analyst over the real signals (never the oracle).
@@ -165,27 +166,9 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT, on_message))
     app.add_handler(CallbackQueryHandler(on_callback))
 
-    # Proactive alerts: poll on an interval and push new arbs to the owner.
-    interval = float(os.environ.get("ALERT_INTERVAL_SEC", "300") or "300")
+    # Only the favorites feed is proactive now (other scan pushes removed per
+    # request). /scan, /cross, /ev still work on demand.
     fav_interval = float(os.environ.get("FAV_INTERVAL_SEC", "900") or "900")
-
-    async def alert_job(context):  # pragma: no cover - requires Telegram + network
-        try:
-            message = bot.poll_alerts()
-        except Exception as exc:  # noqa: BLE001 - a scan failure shouldn't kill the job
-            print(f"alert poll failed: {exc}")
-            return
-        if message:
-            await context.bot.send_message(chat_id=bot.owner_id, text=message)
-
-    async def broadcast_job(context):  # pragma: no cover - requires Telegram + network
-        try:
-            message = bot.poll_broadcast()
-        except Exception as exc:  # noqa: BLE001 - a scan failure shouldn't kill the job
-            print(f"broadcast poll failed: {exc}")
-            return
-        if message and bot.signal_channel_id is not None:
-            await context.bot.send_message(chat_id=bot.signal_channel_id, text=message)
 
     async def favorites_job(context):  # pragma: no cover - requires Telegram + network
         try:
@@ -200,15 +183,10 @@ def main() -> None:
             )
 
     if app.job_queue is not None:
-        app.job_queue.run_repeating(alert_job, interval=interval, first=interval)
-        app.job_queue.run_repeating(favorites_job, interval=fav_interval, first=fav_interval)
-        if bot.signal_channel_id is not None:
-            app.job_queue.run_repeating(
-                broadcast_job, interval=interval, first=interval
-            )
-            print(f"Broadcasting risk-free edges to channel {bot.signal_channel_id}.")
+        # first=20s so the first favorites alert lands shortly after boot.
+        app.job_queue.run_repeating(favorites_job, interval=fav_interval, first=20)
     else:  # pragma: no cover
-        print("job-queue extra not installed; alerts disabled "
+        print("job-queue extra not installed; favorites alerts disabled "
               "(pip install 'python-telegram-bot[job-queue]').")
 
     print(f"Bot up. mode={bot.exec_config.mode}. Waiting for owner {bot.owner_id}.")

@@ -214,19 +214,19 @@ class ExecutionConfig:
 def simulate(plan: OrderPlan, config: ExecutionConfig) -> str:
     """Human-readable description of what would be sent. Places nothing."""
     lines = [
-        f"DRY-RUN order plan for: {plan.question}",
-        f"  market={plan.market_id} kind={plan.kind} sets={plan.sets:.2f}",
+        f"드라이런 주문 계획: {plan.question}",
+        f"  마켓={plan.market_id} 종류={plan.kind} 수량={plan.sets:.2f}주",
     ]
     for leg in plan.legs:
         lines.append(
-            f"  {leg.side} {leg.size:.2f} '{leg.outcome}' @ {leg.price:.4f} "
-            f"(token {leg.token_id[:10]}...)"
+            f"  매수 {leg.size:.2f}주 '{leg.outcome}' @ {leg.price:.4f} "
+            f"(토큰 {leg.token_id[:10]}...)"
         )
     lines.append(
-        f"  cost=${plan.total_cost:.2f} payoff=${plan.expected_payoff:.2f} "
-        f"profit=${plan.expected_profit:.2f}"
+        f"  비용=${plan.total_cost:.2f} 회수=${plan.expected_payoff:.2f} "
+        f"수익=${plan.expected_profit:.2f}"
     )
-    lines.append("  >>> NO ORDERS PLACED (dry-run) <<<")
+    lines.append("  >>> 주문 안 함 (드라이런) <<<")
     return "\n".join(lines)
 
 
@@ -309,7 +309,7 @@ class PolymarketExecutor:
             return ExecutionResult(
                 placed=True,
                 dry_run=False,
-                detail=f"Filled all {len(filled)} legs for '{plan.question}'.",
+                detail=f"'{plan.question}' — {len(filled)}개 레그 전부 체결 완료.",
                 filled_legs=filled,
             )
         except Exception as exc:  # pragma: no cover
@@ -318,8 +318,8 @@ class PolymarketExecutor:
                 placed=False,
                 dry_run=False,
                 detail=(
-                    f"ABORTED after filling {filled}: {exc}. Unwind: {unwound}. "
-                    "CHECK YOUR POSITIONS MANUALLY."
+                    f"중단됨 (체결된 레그: {filled}): {exc}. 되돌리기: {unwound}. "
+                    "포지션을 직접 확인하세요."
                 ),
                 filled_legs=filled,
             )

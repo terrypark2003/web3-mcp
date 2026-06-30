@@ -112,7 +112,7 @@ class TestExecutorSafety(unittest.TestCase):
         result = PolymarketExecutor(cfg).execute(plan)
         self.assertFalse(result.placed)
         self.assertTrue(result.dry_run)
-        self.assertIn("NO ORDERS PLACED", result.detail)
+        self.assertIn("주문 안 함", result.detail)
 
     def test_live_without_creds_raises(self):
         cfg = ExecutionConfig.from_env({"EXECUTION_MODE": "live"})
@@ -124,8 +124,8 @@ class TestExecutorSafety(unittest.TestCase):
         cfg = ExecutionConfig.from_env({})
         plan = build_order_plan(buy_set_op(), max_stake=1.0)
         text = simulate(plan, cfg)
-        self.assertIn("DRY-RUN", text)
-        self.assertIn("NO ORDERS PLACED", text)
+        self.assertIn("드라이런", text)
+        self.assertIn("주문 안 함", text)
 
 
 if __name__ == "__main__":

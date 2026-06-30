@@ -72,7 +72,7 @@ class TestCommands(unittest.TestCase):
     def test_plan_dry_run(self):
         bot = make_bot([buy_set_op("abc")])
         out = bot.handle(OWNER, "/plan abc")
-        self.assertIn("NO ORDERS PLACED", out)
+        self.assertIn("주문 안 함", out)
 
     def test_plan_unknown_id(self):
         bot = make_bot([buy_set_op("abc")])
@@ -87,7 +87,7 @@ class TestCommands(unittest.TestCase):
         staged = bot.handle(OWNER, "/execute abc")
         self.assertIn("/confirm", staged)
         result = bot.handle(OWNER, "/confirm")
-        self.assertIn("NO ORDERS PLACED", result)
+        self.assertIn("주문 안 함", result)
 
     def test_confirm_without_stage(self):
         bot = make_bot([buy_set_op()])

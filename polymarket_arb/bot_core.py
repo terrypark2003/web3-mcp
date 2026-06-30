@@ -27,18 +27,21 @@ from .portfolio import SizingConfig, allocate_portfolio, format_portfolio
 from .scanner import cross_to_dict, ev_to_dict, opportunity_to_dict
 
 HELP = (
-    "Prediction-market arbitrage bot (owner-only)\n"
-    "/scan - find Polymarket complete-set arbitrage\n"
-    "/cross - cross-venue arbitrage (Kalshi vs Polymarket)\n"
-    "/ev - positive-EV signals vs fair value (NOT risk-free)\n"
-    "/ask <question> - ask Gemini about the current signals (plain-language)\n"
-    "/allocate <bankroll> - size bets across the edges\n"
-    "/plan <market_id> - show the order plan for one opportunity\n"
-    "/execute <market_id> - stage a trade, then /confirm to place it\n"
-    "/confirm - execute the staged trade (live only; dry-run otherwise)\n"
-    "/cancel - discard the staged trade\n"
-    "/alerts <on|off|status> - proactive push when new arbs appear\n"
-    "/status - show mode, max stake, and live-readiness"
+    "예측시장 봇 (소유자 전용)\n"
+    "💵 1일 내 정산 + $1→약 $1.05~$1.15 '유력후보'를 자동으로 보내드리고, "
+    "메시지의 [💵 $1 매수] 버튼으로 바로 매수합니다 (기본 dry-run).\n"
+    "\n"
+    "명령어:\n"
+    "/status - 모드·최대 금액·실거래 준비 상태\n"
+    "/scan - 폴리마켓 컴플리트셋 차익 찾기\n"
+    "/cross - 거래소 간 차익 (Kalshi vs 폴리마켓)\n"
+    "/ev - 공정가치 대비 포지티브 EV (무위험 아님)\n"
+    "/ask <질문> - 현재 신호에 대해 Gemini에게 질문\n"
+    "/allocate <자본> - 엣지에 자본 배분\n"
+    "/plan <market_id> - 한 기회의 주문 계획 보기\n"
+    "/execute <market_id> - 거래 스테이징 후 /confirm 으로 실행\n"
+    "/confirm - 스테이징한 거래 실행 (live만 실제, 아니면 dry-run)\n"
+    "/cancel - 스테이징 취소"
 )
 
 
