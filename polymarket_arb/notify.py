@@ -592,15 +592,47 @@ def maybe_gemini_note(payload: dict) -> Optional[str]:
         return None
 
 
+_TELEGRAM_MAX = 4096  # Telegram rejects a single message longer than this.
+
+
+def split_for_telegram(text: str, limit: int = _TELEGRAM_MAX) -> list:
+    """Split ``text`` into <=``limit``-char pieces, preferring line boundaries.
+
+    A whole-pool favorites feed easily exceeds Telegram's 4096-char ceiling
+    (which returns 400). The user asked for *all* of them, so we send several
+    messages rather than truncate. A single over-long line is hard-split.
+    """
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        if len(line) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            for i in range(0, len(line), limit):
+                chunks.append(line[i:i + limit])
+            continue
+        candidate = line if not current else current + "\n" + line
+        if len(candidate) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks or [""]
+
+
 def send_telegram(token: str, chat_id: str, text: str) -> None:  # pragma: no cover - network
     import requests
 
-    resp = requests.post(
-        f"{_TELEGRAM_API}/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
-        timeout=20,
-    )
-    resp.raise_for_status()
+    for chunk in split_for_telegram(text):
+        resp = requests.post(
+            f"{_TELEGRAM_API}/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": chunk, "disable_web_page_preview": True},
+            timeout=20,
+        )
+        resp.raise_for_status()
 
 
 def main() -> int:  # pragma: no cover - orchestration, exercised via the workflow

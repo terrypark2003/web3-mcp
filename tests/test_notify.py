@@ -192,6 +192,27 @@ class TestRealismRendering(unittest.TestCase):
         self.assertIn("$1 → 약 $1.04 가치", text)
 
 
+class TestTelegramSplit(unittest.TestCase):
+    def test_short_text_one_chunk(self):
+        from polymarket_arb.notify import split_for_telegram
+        self.assertEqual(split_for_telegram("hello\nworld"), ["hello\nworld"])
+
+    def test_long_text_splits_under_limit(self):
+        from polymarket_arb.notify import split_for_telegram
+        text = "\n".join(f"line {i}" for i in range(2000))  # ~ >4096 chars
+        chunks = split_for_telegram(text, limit=4096)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(c) <= 4096 for c in chunks))
+        # Nothing lost: rejoining yields the original lines.
+        self.assertEqual("\n".join(chunks).split("\n"), text.split("\n"))
+
+    def test_single_overlong_line_hard_split(self):
+        from polymarket_arb.notify import split_for_telegram
+        chunks = split_for_telegram("x" * 9000, limit=4096)
+        self.assertTrue(all(len(c) <= 4096 for c in chunks))
+        self.assertEqual("".join(chunks), "x" * 9000)
+
+
 class TestResolutionWindow(unittest.TestCase):
     def _payload(self, kind, end_date):
         return {
