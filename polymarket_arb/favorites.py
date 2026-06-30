@@ -36,6 +36,7 @@ class FavoriteBet:
     end_date: Optional[str]
     days_to_resolution: Optional[float]
     url: Optional[str] = None
+    token_id: str = ""        # outcome token id — needed to place a buy
 
 
 def days_until(end_date, now: Optional[datetime] = None) -> Optional[float]:
@@ -92,6 +93,7 @@ def find_favorites(
                 end_date=cs.end_date,
                 days_to_resolution=days,
                 url=cs.url,
+                token_id=leg.token_id,
             ))
     out.sort(key=lambda f: (
         f.days_to_resolution if f.days_to_resolution is not None else 1e9,
@@ -115,6 +117,7 @@ def favorite_to_dict(f: FavoriteBet) -> dict:
             None if f.days_to_resolution is None else round(f.days_to_resolution, 2)
         ),
         "url": f.url,
+        "token_id": f.token_id,
     }
 
 

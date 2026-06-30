@@ -75,6 +75,19 @@ def build_bot() -> ArbBot:
 
             return scan_world_cup_value_live(PolymarketClient(), OddsApiClient(odds_key))
 
+    # Near-resolution favorites ("tap to buy $1"). Whole-pool, no odds key needed.
+    def fav_scan_fn():
+        from .client import PolymarketClient
+        from .favorites import build_favorites_live
+
+        return build_favorites_live(
+            PolymarketClient(),
+            min_price=float(os.environ.get("NOTIFY_FAV_MIN_PRICE", "0.91") or "0.91"),
+            max_price=float(os.environ.get("NOTIFY_FAV_MAX_PRICE", "0.95") or "0.95"),
+            min_size=float(os.environ.get("NOTIFY_FAV_MIN_SIZE", "5") or "5"),
+            max_days=float(os.environ.get("NOTIFY_MAX_DAYS", "2") or "2"),
+        )
+
     # Gemini = plain-language analyst over the real signals (never the oracle).
     gemini_generate = None
     gemini_key = os.environ.get("GEMINI_API_KEY")
@@ -96,12 +109,29 @@ def build_bot() -> ArbBot:
         signal_channel_id=signal_channel_id,
         wc_scan_fn=wc_scan_fn,
         gemini_generate=gemini_generate,
+        fav_scan_fn=fav_scan_fn,
+        fav_max_buy_usd=float(os.environ.get("FAV_BUY_USD", "1") or "1"),
     )
+
+
+def _keyboard(rows):  # pragma: no cover - thin telegram adapter
+    """Turn ``[[(label, callback_data), ...], ...]`` into an InlineKeyboardMarkup."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(label, callback_data=data) for label, data in row]
+        for row in rows
+    ])
 
 
 def main() -> None:
     try:
-        from telegram.ext import Application, MessageHandler, filters
+        from telegram.ext import (
+            Application,
+            CallbackQueryHandler,
+            MessageHandler,
+            filters,
+        )
     except ImportError as exc:  # pragma: no cover
         raise SystemExit(
             "python-telegram-bot not installed (pip install -r requirements-bot.txt)"
@@ -122,10 +152,22 @@ def main() -> None:
         reply = bot.handle(chat.id, message.text or "")
         await message.reply_text(reply)
 
+    async def on_callback(update, context):  # pragma: no cover - requires Telegram
+        query = update.callback_query
+        chat = update.effective_chat
+        if query is None or chat is None:
+            return
+        await query.answer()
+        reply, rows = bot.handle_callback(chat.id, query.data or "")
+        markup = _keyboard(rows) if rows else None
+        await context.bot.send_message(chat_id=chat.id, text=reply, reply_markup=markup)
+
     app.add_handler(MessageHandler(filters.TEXT, on_message))
+    app.add_handler(CallbackQueryHandler(on_callback))
 
     # Proactive alerts: poll on an interval and push new arbs to the owner.
     interval = float(os.environ.get("ALERT_INTERVAL_SEC", "300") or "300")
+    fav_interval = float(os.environ.get("FAV_INTERVAL_SEC", "900") or "900")
 
     async def alert_job(context):  # pragma: no cover - requires Telegram + network
         try:
@@ -145,8 +187,21 @@ def main() -> None:
         if message and bot.signal_channel_id is not None:
             await context.bot.send_message(chat_id=bot.signal_channel_id, text=message)
 
+    async def favorites_job(context):  # pragma: no cover - requires Telegram + network
+        try:
+            result = bot.poll_favorites()
+        except Exception as exc:  # noqa: BLE001 - a scan failure shouldn't kill the job
+            print(f"favorites poll failed: {exc}")
+            return
+        if result:
+            message, rows = result
+            await context.bot.send_message(
+                chat_id=bot.owner_id, text=message, reply_markup=_keyboard(rows),
+            )
+
     if app.job_queue is not None:
         app.job_queue.run_repeating(alert_job, interval=interval, first=interval)
+        app.job_queue.run_repeating(favorites_job, interval=fav_interval, first=fav_interval)
         if bot.signal_channel_id is not None:
             app.job_queue.run_repeating(
                 broadcast_job, interval=interval, first=interval

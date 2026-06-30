@@ -19,6 +19,8 @@ from .execution import (
     OrderPlan,
     PolymarketExecutor,
     build_order_plan,
+    build_single_buy_plan,
+    simulate,
 )
 from .models import ARB_BUY_SET, Opportunity
 from .portfolio import SizingConfig, allocate_portfolio, format_portfolio
@@ -103,6 +105,8 @@ class ArbBot:
         signal_channel_id: Optional[int] = None,
         wc_scan_fn: Optional[Callable[[], list[EVOpportunity]]] = None,
         gemini_generate: Optional[Callable[[str, Optional[str]], str]] = None,
+        fav_scan_fn: Optional[Callable[[], list]] = None,
+        fav_max_buy_usd: float = 1.0,
     ) -> None:
         self.owner_id = owner_id
         self.scan_fn = scan_fn
@@ -116,9 +120,14 @@ class ArbBot:
         self.signal_channel_id = signal_channel_id
         self.wc_scan_fn = wc_scan_fn
         self.gemini_generate = gemini_generate
+        self.fav_scan_fn = fav_scan_fn
+        self.fav_max_buy_usd = fav_max_buy_usd
         self._pending: dict[int, OrderPlan] = {}
         self._alert_seen: set = set()
         self._broadcast_seen: set = set()
+        self._fav_seen: set = set()           # (market_id, outcome) already offered
+        self._fav_offered: dict[str, object] = {}  # short id -> FavoriteBet
+        self._fav_counter: int = 0
 
     def is_authorized(self, chat_id: int) -> bool:
         return chat_id == self.owner_id
@@ -179,6 +188,83 @@ class ArbBot:
         new_ops = [current[k] for k in current if k in new_keys]
         new_ops.sort(key=lambda o: o.edge_pct, reverse=True)
         return format_alert(new_ops)
+
+    # -- Favorites: "tap to buy $1" (NOT risk-free) ----------------------- #
+
+    def poll_favorites(self, limit: int = 20):
+        """New near-resolution favorites with one inline 'buy $1' button each.
+
+        Returns ``(message, button_rows)`` where ``button_rows`` is a list of
+        rows, each a list of ``(label, callback_data)`` tuples (the Telegram
+        shell turns these into an inline keyboard). Returns ``None`` when nothing
+        new. Only the favorites actually offered are marked seen, so a capped
+        batch lets the rest surface on the next poll.
+        """
+        if self.fav_scan_fn is None:
+            return None
+        favs = self.fav_scan_fn() or []
+        fresh = [f for f in favs if (f.market_id, f.outcome) not in self._fav_seen]
+        if not fresh:
+            return None
+        fresh = fresh[:limit]
+
+        lines = ["💵 곧 끝나는 유력후보 (무위험 아님 — 탭하면 $1 매수 준비):"]
+        rows = []
+        for f in fresh:
+            self._fav_counter += 1
+            ref = f"f:{self._fav_counter}"
+            self._fav_offered[ref] = f
+            self._fav_seen.add((f.market_id, f.outcome))
+            payout = (1.0 / f.price) if f.price else 0.0
+            cents = f.price * 100
+            lines.append(
+                f"- {f.question[:46]} — {f.outcome[:18]} {cents:.0f}¢ "
+                f"($1→약 ${payout:.2f}, 적중확률≈{cents:.0f}%)"
+            )
+            rows.append([(f"💵 $1 매수 — {f.outcome[:14]} {cents:.0f}¢", ref)])
+        lines.append("⚠️ 무위험 아님: 적중 시 소액 이익, 빗나가면 전액 손실. 탭→확인 2단계.")
+        return "\n".join(lines), rows
+
+    def handle_callback(self, chat_id: int, data: str):
+        """Handle an inline-button tap. Returns ``(reply_text, button_rows|None)``.
+
+        Two-step for safety: a favorite button stages a $1 buy and shows what
+        would be sent; a second 'confirm' tap actually places it (dry-run unless
+        ``EXECUTION_MODE=live``).
+        """
+        if not self.is_authorized(chat_id):
+            return "Unauthorized.", None
+        data = (data or "").strip()
+
+        if data == "fav_cancel":
+            self._pending.pop(chat_id, None)
+            return "취소했습니다.", None
+
+        if data == "fav_confirm":
+            return self._confirm(chat_id), None
+
+        if data.startswith("f:"):
+            fav = self._fav_offered.get(data)
+            if fav is None:
+                return "만료된 항목입니다. 다음 알림에서 다시 시도하세요.", None
+            try:
+                plan = build_single_buy_plan(
+                    fav.token_id, fav.outcome, fav.price,
+                    market_id=fav.market_id, question=fav.question,
+                    dollars=self.fav_max_buy_usd, slippage=self.exec_config.slippage,
+                )
+            except Exception as exc:  # noqa: BLE001
+                return f"주문을 만들 수 없습니다: {exc}", None
+            self._pending[chat_id] = plan
+            verb = ("실제로 체결" if self.exec_config.mode == "live"
+                    else "시뮬레이션(dry-run)")
+            text = (
+                f"{simulate(plan, self.exec_config)}\n\n"
+                f"⚠️ 무위험 아님 — 빗나가면 전액 손실.\n아래 확인을 누르면 {verb} 합니다."
+            )
+            return text, [[("✅ 확인", "fav_confirm")], [("✖️ 취소", "fav_cancel")]]
+
+        return f"알 수 없는 동작: {data}", None
 
     def _cross(self) -> str:
         if self.cross_scan_fn is None:
