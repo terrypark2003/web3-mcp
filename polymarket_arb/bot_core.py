@@ -28,10 +28,12 @@ from .scanner import cross_to_dict, ev_to_dict, opportunity_to_dict
 
 HELP = (
     "예측시장 봇 (소유자 전용)\n"
-    "💵 1일 내 정산 + $1→약 $1.05~$1.15 '유력후보'를 자동으로 보내드리고, "
-    "메시지의 [💵 $1 매수] 버튼으로 바로 매수합니다 (기본 dry-run).\n"
+    "💵 /fav 를 보내면 12시간 내 정산 + $1→약 $1.05~$1.15 '유력후보'를 "
+    "3/6/9/12시간 구간으로 정리해 드립니다. 각 항목의 [💵 $1 매수] 버튼으로 "
+    "바로 매수 (기본 dry-run).\n"
     "\n"
     "명령어:\n"
+    "/fav - 지금 유력후보 보기 (남은시간 구간별 + 매수버튼)\n"
     "/status - 모드·최대 금액·실거래 준비 상태\n"
     "/scan - 폴리마켓 컴플리트셋 차익 찾기\n"
     "/cross - 거래소 간 차익 (Kalshi vs 폴리마켓)\n"
@@ -128,7 +130,6 @@ class ArbBot:
         self._pending: dict[int, OrderPlan] = {}
         self._alert_seen: set = set()
         self._broadcast_seen: set = set()
-        self._fav_seen: set = set()           # (market_id, outcome) already offered
         self._fav_offered: dict[str, object] = {}  # short id -> FavoriteBet
         self._fav_counter: int = 0
 
@@ -194,42 +195,47 @@ class ArbBot:
 
     # -- Favorites: "tap to buy $1" (NOT risk-free) ----------------------- #
 
-    def poll_favorites(self, limit: int = 20, chunk_size: int = 5) -> list:
-        """New near-resolution favorites, split into numbered ``chunk_size`` groups.
+    def favorites_now(self, chunk_size: int = 5, max_hours: float = 12.0) -> list:
+        """On-demand favorites, bucketed by hours-to-resolution (≤3/6/9/12h).
 
         Returns a list of ``(message, button_rows)`` chunks — one Telegram
-        message each, with at most ``chunk_size`` numbered items and a matching
-        numbered buy button per item (so item "1)" pairs with button "1)"). An
-        empty list means nothing new. Only the favorites actually offered are
-        marked seen, so a capped/chunked batch lets the rest surface next poll.
+        message each, ≤``chunk_size`` numbered items, a matching numbered buy
+        button per item (item "1)" pairs with button "1)"), and each line shows
+        the ETA (`⏳Nh`). NOT deduped: every call lists everything currently
+        within ``max_hours``. Empty list if none qualify.
         """
         if self.fav_scan_fn is None:
             return []
         favs = self.fav_scan_fn() or []
-        fresh = [f for f in favs if (f.market_id, f.outcome) not in self._fav_seen]
-        if not fresh:
-            return []
-        fresh = fresh[:limit]
+        timed = []
+        for f in favs:
+            hours = f.days_to_resolution * 24 if f.days_to_resolution is not None else None
+            if hours is not None and 0 < hours <= max_hours:
+                timed.append((hours, f))
+        timed.sort(key=lambda x: x[0])  # soonest first
 
+        buckets = [("3시간", 0.0, 3.0), ("6시간", 3.0, 6.0),
+                   ("9시간", 6.0, 9.0), ("12시간", 9.0, 12.0)]
         chunks = []
-        for start in range(0, len(fresh), chunk_size):
-            group = fresh[start:start + chunk_size]
-            lines = ["💵 곧 끝나는 유력후보 (무위험 아님 — 아래 번호 버튼으로 $1 매수):"]
-            rows = []
-            for i, f in enumerate(group, start=1):
-                self._fav_counter += 1
-                ref = f"f:{self._fav_counter}"
-                self._fav_offered[ref] = f
-                self._fav_seen.add((f.market_id, f.outcome))
-                payout = (1.0 / f.price) if f.price else 0.0
-                cents = f.price * 100
-                lines.append(
-                    f"{i}) {f.question[:40]} — {f.outcome[:14]} {cents:.0f}¢ "
-                    f"($1→약 ${payout:.2f})"
-                )
-                rows.append([(f"{i}) 💵 $1 매수 — {f.outcome[:12]} {cents:.0f}¢", ref)])
-            lines.append("⚠️ 무위험 아님: 적중 시 소액 이익, 빗나가면 전액 손실.")
-            chunks.append(("\n".join(lines), rows))
+        for label, lo, hi in buckets:
+            group = [(h, f) for (h, f) in timed if lo < h <= hi]
+            for start in range(0, len(group), chunk_size):
+                part = group[start:start + chunk_size]
+                lines = [f"💵 {label} 내 정산 유력후보 (무위험 아님 — 번호 버튼으로 $1 매수):"]
+                rows = []
+                for i, (hours, f) in enumerate(part, start=1):
+                    self._fav_counter += 1
+                    ref = f"f:{self._fav_counter}"
+                    self._fav_offered[ref] = f
+                    payout = (1.0 / f.price) if f.price else 0.0
+                    cents = f.price * 100
+                    lines.append(
+                        f"{i}) {f.question[:36]} — {f.outcome[:12]} {cents:.0f}¢ "
+                        f"($1→약 ${payout:.2f}, ⏳{hours:.1f}h)"
+                    )
+                    rows.append([(f"{i}) 💵 $1 매수 — {f.outcome[:10]} {cents:.0f}¢", ref)])
+                lines.append("⚠️ 무위험 아님: 적중 시 소액 이익, 빗나가면 전액 손실.")
+                chunks.append(("\n".join(lines), rows))
         return chunks
 
     def handle_callback(self, chat_id: int, data: str):
