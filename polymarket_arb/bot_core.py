@@ -29,12 +29,13 @@ from .scanner import cross_to_dict, ev_to_dict, opportunity_to_dict
 
 HELP = (
     "예측시장 봇 (소유자 전용)\n"
-    "💵 /fav 를 보내면 12시간 내 정산 + $1→약 $1.05~$1.15 '유력후보'를 "
-    "3/6/9/12시간 구간으로 정리해 드립니다. 각 항목의 [💵 $1 매수] 버튼으로 "
-    "바로 매수 (기본 dry-run).\n"
+    "💵 /fav1 /fav3 /fav6 /fav9 /fav12 — 해당 시간 내 정산되는 "
+    "$1→약 $1.05~$1.15 '유력후보' 5개를 임박 순으로 보여줍니다. "
+    "각 항목의 [💵 $1 매수] 버튼으로 바로 매수 (기본 dry-run).\n"
     "\n"
     "명령어:\n"
-    "/fav - 지금 유력후보 보기 (남은시간 구간별 + 매수버튼)\n"
+    "/fav1 - 1시간 내 정산 유력후보 (가장 임박)\n"
+    "/fav3 - 3시간 내 / /fav6 - 6시간 내 / /fav9 - 9시간 내 / /fav12 - 12시간 내\n"
     "/balance - 내 폴리마켓 USDC 잔고 확인\n"
     "/status - 모드·최대 금액·실거래 준비 상태\n"
     "/scan - 폴리마켓 컴플리트셋 차익 찾기\n"
@@ -199,14 +200,13 @@ class ArbBot:
 
     # -- Favorites: "tap to buy $1" (NOT risk-free) ----------------------- #
 
-    def favorites_now(self, chunk_size: int = 5, max_hours: float = 12.0) -> list:
-        """On-demand favorites, bucketed by hours-to-resolution (≤3/6/9/12h).
+    def favorites_now(self, limit: int = 5, max_hours: float = 12.0) -> list:
+        """On-demand: the ``limit`` soonest-resolving favorites within ``max_hours``.
 
-        Returns a list of ``(message, button_rows)`` chunks — one Telegram
-        message each, ≤``chunk_size`` numbered items, a matching numbered buy
-        button per item (item "1)" pairs with button "1)"), and each line shows
-        the ETA (`⏳Nh`). NOT deduped: every call lists everything currently
-        within ``max_hours``. Empty list if none qualify.
+        Returns ``[(message, button_rows)]`` — a single Telegram message with up
+        to ``limit`` numbered items (soonest first), a matching numbered buy
+        button per item, and the time-to-resolution on every line. NOT deduped.
+        Empty list if none qualify.
         """
         if self.fav_scan_fn is None:
             return []
@@ -217,30 +217,25 @@ class ArbBot:
             if hours is not None and 0 < hours <= max_hours:
                 timed.append((hours, f))
         timed.sort(key=lambda x: x[0])  # soonest first
+        top = timed[:limit]
+        if not top:
+            return []
 
-        buckets = [("3시간", 0.0, 3.0), ("6시간", 3.0, 6.0),
-                   ("9시간", 6.0, 9.0), ("12시간", 9.0, 12.0)]
-        chunks = []
-        for label, lo, hi in buckets:
-            group = [(h, f) for (h, f) in timed if lo < h <= hi]
-            for start in range(0, len(group), chunk_size):
-                part = group[start:start + chunk_size]
-                lines = [f"💵 {label} 내 정산 유력후보 (무위험 아님 — 번호 버튼으로 $1 매수):"]
-                rows = []
-                for i, (hours, f) in enumerate(part, start=1):
-                    self._fav_counter += 1
-                    ref = f"f:{self._fav_counter}"
-                    self._fav_offered[ref] = f
-                    payout = (1.0 / f.price) if f.price else 0.0
-                    cents = f.price * 100
-                    lines.append(
-                        f"{i}) {f.question[:36]} — {f.outcome[:12]} {cents:.0f}¢ "
-                        f"($1→약 ${payout:.2f}, ⏳{hours:.1f}h)"
-                    )
-                    rows.append([(f"{i}) 💵 $1 매수 — {f.outcome[:10]} {cents:.0f}¢", ref)])
-                lines.append("⚠️ 무위험 아님: 적중 시 소액 이익, 빗나가면 전액 손실.")
-                chunks.append(("\n".join(lines), rows))
-        return chunks
+        lines = [f"💵 {max_hours:g}시간 내 유력후보 (무위험 아님 — 번호 버튼으로 $1 매수):"]
+        rows = []
+        for i, (hours, f) in enumerate(top, start=1):
+            self._fav_counter += 1
+            ref = f"f:{self._fav_counter}"
+            self._fav_offered[ref] = f
+            payout = (1.0 / f.price) if f.price else 0.0
+            cents = f.price * 100
+            lines.append(
+                f"{i}) {f.question[:38]} — {f.outcome[:12]} {cents:.0f}¢ "
+                f"($1→약 ${payout:.2f}, ⏳ {hours:.1f}시간 남음)"
+            )
+            rows.append([(f"{i}) 💵 $1 매수 — {f.outcome[:10]} {cents:.0f}¢", ref)])
+        lines.append("⚠️ 무위험 아님: 적중 시 소액 이익, 빗나가면 전액 손실.")
+        return [("\n".join(lines), rows)]
 
     def handle_callback(self, chat_id: int, data: str):
         """Handle an inline-button tap. Returns ``(reply_text, button_rows|None)``.
