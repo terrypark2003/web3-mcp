@@ -13,6 +13,7 @@ lives in bot_core.py.
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 from .bot_core import ArbBot
@@ -86,7 +87,8 @@ def build_bot() -> ArbBot:
             min_price=float(os.environ.get("NOTIFY_FAV_MIN_PRICE", "0.87") or "0.87"),
             max_price=float(os.environ.get("NOTIFY_FAV_MAX_PRICE", "0.95") or "0.95"),
             min_size=float(os.environ.get("NOTIFY_FAV_MIN_SIZE", "5") or "5"),
-            max_days=float(os.environ.get("NOTIFY_MAX_DAYS", "1") or "1"),
+            # 0.5d = 12h, the widest bucket; favorites_now buckets into 3/6/9/12h.
+            max_days=float(os.environ.get("NOTIFY_MAX_DAYS", "0.5") or "0.5"),
         )
 
     # Gemini = plain-language analyst over the real signals (never the oracle).
@@ -145,13 +147,37 @@ def main() -> None:
     bot = build_bot()
     app = Application.builder().token(token).build()
 
+    _FAV_CMDS = ("/fav", "/favorites", "/buy")
+
+    async def _send_favorites(chat_id):  # pragma: no cover - requires Telegram + network
+        await app.bot.send_message(chat_id=chat_id, text="⏳ 12시간 내 유력후보 찾는 중…")
+        # The scan hits the network; run it off the event loop so polling stays live.
+        chunks = await asyncio.to_thread(bot.favorites_now)
+        if not chunks:
+            await app.bot.send_message(
+                chat_id=chat_id,
+                text="지금 조건(가격 0.87~0.95 · 12시간 내 정산)에 맞는 후보가 없어요.",
+            )
+            return
+        for message, rows in chunks:  # one message per 5-item group/bucket
+            await app.bot.send_message(
+                chat_id=chat_id, text=message, reply_markup=_keyboard(rows),
+            )
+
     async def on_message(update, context):  # pragma: no cover - requires Telegram
         chat = update.effective_chat
         message = update.effective_message
         if chat is None or message is None:
             return
-        reply = bot.handle(chat.id, message.text or "")
-        await message.reply_text(reply)
+        text = message.text or ""
+        cmd = text.strip().split()[0].lower() if text.strip() else ""
+        if cmd in _FAV_CMDS:
+            if not bot.is_authorized(chat.id):
+                await message.reply_text("Unauthorized.")
+                return
+            await _send_favorites(chat.id)
+            return
+        await message.reply_text(bot.handle(chat.id, text))
 
     async def on_callback(update, context):  # pragma: no cover - requires Telegram
         query = update.callback_query
@@ -166,28 +192,8 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT, on_message))
     app.add_handler(CallbackQueryHandler(on_callback))
 
-    # Only the favorites feed is proactive now (other scan pushes removed per
-    # request). /scan, /cross, /ev still work on demand. Default: once a day.
-    fav_interval = float(os.environ.get("FAV_INTERVAL_SEC", "86400") or "86400")
-
-    async def favorites_job(context):  # pragma: no cover - requires Telegram + network
-        try:
-            chunks = bot.poll_favorites()
-        except Exception as exc:  # noqa: BLE001 - a scan failure shouldn't kill the job
-            print(f"favorites poll failed: {exc}")
-            return
-        for message, rows in chunks:  # one message per 5-item group
-            await context.bot.send_message(
-                chat_id=bot.owner_id, text=message, reply_markup=_keyboard(rows),
-            )
-
-    if app.job_queue is not None:
-        # first=20s so the first favorites alert lands shortly after boot.
-        app.job_queue.run_repeating(favorites_job, interval=fav_interval, first=20)
-    else:  # pragma: no cover
-        print("job-queue extra not installed; favorites alerts disabled "
-              "(pip install 'python-telegram-bot[job-queue]').")
-
+    # On-demand only: favorites are shown when the owner sends /fav (no proactive
+    # crawling/pushing). /scan, /cross, /ev also work on demand.
     print(f"Bot up. mode={bot.exec_config.mode}. Waiting for owner {bot.owner_id}.")
     app.run_polling()
 
