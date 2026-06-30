@@ -126,11 +126,14 @@ def build_favorites_live(
     min_size: float = 1.0,
     max_days: Optional[float] = 2.0,
     now: Optional[datetime] = None,
+    debug: bool = False,
 ) -> list[FavoriteBet]:
     """Fetch active markets resolving within ``max_days``, confirm favorites on the book.
 
     Cheap pre-filter on Gamma's indicative prices + end date keeps order-book
     fetches bounded; the live book is the source of truth for the final decision.
+    ``debug`` prints the funnel counts (and a sample) so a silent feed can be
+    diagnosed from the run log.
     """
     from .normalize import (
         _maybe_json_list,
@@ -141,15 +144,28 @@ def build_favorites_live(
     # Loosen the pre-filter band slightly so a market that's marginally outside
     # on indicative price still gets a book fetch (the book is authoritative).
     lo, hi = min_price - 0.04, max_price + 0.04
+    window = max_days if max_days is not None else 1e9
+
+    markets = client.active_markets()
+    within = []
+    for market in markets:
+        days = days_until(market.get("endDate"), now)
+        if days is not None and 0 <= days <= window:
+            within.append(market)
 
     candidates = []
-    for market in client.active_markets():
-        days = days_until(market.get("endDate"), now)
-        if days is None or not (0 <= days <= (max_days if max_days is not None else 1e9)):
-            continue
+    for market in within:
         prices = [_to_float(p) for p in _maybe_json_list(market.get("outcomePrices"))]
         if any(p is not None and lo <= p <= hi for p in prices):
             candidates.append(market)
+
+    if debug:
+        print(f"[favorites] markets={len(markets)} within_{max_days}d={len(within)} "
+              f"in_band[{lo:.2f},{hi:.2f}]={len(candidates)}", flush=True)
+        for m in within[:25]:
+            d = days_until(m.get("endDate"), now)
+            print(f"  near({d:.2f}d): {str(m.get('question',''))[:46]} | "
+                  f"{m.get('outcomePrices')}", flush=True)
 
     token_ids: list[str] = []
     for market in candidates:

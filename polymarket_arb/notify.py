@@ -517,9 +517,10 @@ def build_favorites_payload(demo: bool = False) -> dict:
             from .client import PolymarketClient
             from .favorites import build_favorites_live
 
+            debug = os.environ.get("NOTIFY_FAV_DEBUG", "").lower() in ("1", "true", "yes")
             bets = build_favorites_live(
                 PolymarketClient(), min_price=min_price, max_price=max_price,
-                min_size=min_size, max_days=max_days,
+                min_size=min_size, max_days=max_days, debug=debug,
             )
             meta = {"source": "live"}
     except Exception as exc:  # noqa: BLE001 - never alert on a failed scan
