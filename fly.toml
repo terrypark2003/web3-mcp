@@ -1,18 +1,25 @@
-# Fly.io config for the always-on Telegram bot (worker — no inbound HTTP).
-# Rename `app` to something globally unique (or let `fly launch` set it).
-# Set secrets with `fly secrets set ...` — never commit them. See DEPLOY.md.
-app = "polymarket-fav-bot"
-primary_region = "iad"
+# fly.toml app configuration file generated for web3-mcp on 2026-06-30T07:42:17Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'web3-mcp'
+primary_region = 'iad'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
-# A polling bot exposes no port, so there is no [http_service]. With no service,
-# the machine stays running (it is not auto-stopped on idle) — exactly what a
-# long-poll bot needs.
 [processes]
-  app = "python -m polymarket_arb.telegram_bot"
+  app = 'python -m polymarket_arb.telegram_bot'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'
