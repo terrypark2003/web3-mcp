@@ -194,39 +194,43 @@ class ArbBot:
 
     # -- Favorites: "tap to buy $1" (NOT risk-free) ----------------------- #
 
-    def poll_favorites(self, limit: int = 20):
-        """New near-resolution favorites with one inline 'buy $1' button each.
+    def poll_favorites(self, limit: int = 20, chunk_size: int = 5) -> list:
+        """New near-resolution favorites, split into numbered ``chunk_size`` groups.
 
-        Returns ``(message, button_rows)`` where ``button_rows`` is a list of
-        rows, each a list of ``(label, callback_data)`` tuples (the Telegram
-        shell turns these into an inline keyboard). Returns ``None`` when nothing
-        new. Only the favorites actually offered are marked seen, so a capped
-        batch lets the rest surface on the next poll.
+        Returns a list of ``(message, button_rows)`` chunks — one Telegram
+        message each, with at most ``chunk_size`` numbered items and a matching
+        numbered buy button per item (so item "1)" pairs with button "1)"). An
+        empty list means nothing new. Only the favorites actually offered are
+        marked seen, so a capped/chunked batch lets the rest surface next poll.
         """
         if self.fav_scan_fn is None:
-            return None
+            return []
         favs = self.fav_scan_fn() or []
         fresh = [f for f in favs if (f.market_id, f.outcome) not in self._fav_seen]
         if not fresh:
-            return None
+            return []
         fresh = fresh[:limit]
 
-        lines = ["💵 곧 끝나는 유력후보 (무위험 아님 — 탭하면 $1 매수 준비):"]
-        rows = []
-        for f in fresh:
-            self._fav_counter += 1
-            ref = f"f:{self._fav_counter}"
-            self._fav_offered[ref] = f
-            self._fav_seen.add((f.market_id, f.outcome))
-            payout = (1.0 / f.price) if f.price else 0.0
-            cents = f.price * 100
-            lines.append(
-                f"- {f.question[:46]} — {f.outcome[:18]} {cents:.0f}¢ "
-                f"($1→약 ${payout:.2f}, 적중확률≈{cents:.0f}%)"
-            )
-            rows.append([(f"💵 $1 매수 — {f.outcome[:14]} {cents:.0f}¢", ref)])
-        lines.append("⚠️ 무위험 아님: 적중 시 소액 이익, 빗나가면 전액 손실. 탭→확인 2단계.")
-        return "\n".join(lines), rows
+        chunks = []
+        for start in range(0, len(fresh), chunk_size):
+            group = fresh[start:start + chunk_size]
+            lines = ["💵 곧 끝나는 유력후보 (무위험 아님 — 아래 번호 버튼으로 $1 매수):"]
+            rows = []
+            for i, f in enumerate(group, start=1):
+                self._fav_counter += 1
+                ref = f"f:{self._fav_counter}"
+                self._fav_offered[ref] = f
+                self._fav_seen.add((f.market_id, f.outcome))
+                payout = (1.0 / f.price) if f.price else 0.0
+                cents = f.price * 100
+                lines.append(
+                    f"{i}) {f.question[:40]} — {f.outcome[:14]} {cents:.0f}¢ "
+                    f"($1→약 ${payout:.2f})"
+                )
+                rows.append([(f"{i}) 💵 $1 매수 — {f.outcome[:12]} {cents:.0f}¢", ref)])
+            lines.append("⚠️ 무위험 아님: 적중 시 소액 이익, 빗나가면 전액 손실.")
+            chunks.append(("\n".join(lines), rows))
+        return chunks
 
     def handle_callback(self, chat_id: int, data: str):
         """Handle an inline-button tap. Returns ``(reply_text, button_rows|None)``.

@@ -53,28 +53,35 @@ class TestSingleBuyPlan(unittest.TestCase):
 class TestPollFavorites(unittest.TestCase):
     def test_returns_message_and_buttons(self):
         bot = make_bot([fav(outcome="Yes", price=0.92)])
-        result = bot.poll_favorites()
-        self.assertIsNotNone(result)
-        msg, rows = result
+        chunks = bot.poll_favorites()
+        self.assertEqual(len(chunks), 1)             # one group
+        msg, rows = chunks[0]
         self.assertIn("유력후보", msg)
         self.assertIn("무위험 아님", msg)
         self.assertEqual(len(rows), 1)
         label, data = rows[0][0]
         self.assertTrue(data.startswith("f:"))
         self.assertIn("$1 매수", label)
+        self.assertTrue(label.startswith("1)"))      # numbered to match the item line
+
+    def test_chunks_into_groups_of_five(self):
+        favs = [fav(market_id=f"m{i}", token_id=f"t{i}") for i in range(12)]
+        bot = make_bot(favs)
+        chunks = bot.poll_favorites(limit=12, chunk_size=5)
+        self.assertEqual([len(rows) for _, rows in chunks], [5, 5, 2])  # 12 -> 5+5+2
 
     def test_dedups_until_new(self):
         f = fav()
         bot = make_bot([f])
-        self.assertIsNotNone(bot.poll_favorites())
-        self.assertIsNone(bot.poll_favorites())  # same favorite -> nothing new
+        self.assertTrue(bot.poll_favorites())
+        self.assertEqual(bot.poll_favorites(), [])  # same favorite -> nothing new
 
     def test_cap_lets_rest_surface_next_poll(self):
         favs = [fav(market_id=f"m{i}", token_id=f"t{i}") for i in range(5)]
         bot = make_bot(favs)
-        _, rows1 = bot.poll_favorites(limit=2)
+        rows1 = bot.poll_favorites(limit=2)[0][1]
         self.assertEqual(len(rows1), 2)
-        _, rows2 = bot.poll_favorites(limit=2)
+        rows2 = bot.poll_favorites(limit=2)[0][1]
         self.assertEqual(len(rows2), 2)  # the next two, not re-offering the first two
 
 
@@ -86,7 +93,7 @@ class TestBuyCallback(unittest.TestCase):
 
     def test_tap_stages_then_confirm_executes_dry_run(self):
         bot = make_bot([fav(outcome="Yes", price=0.92)])
-        _, rows = bot.poll_favorites()
+        rows = bot.poll_favorites()[0][1]
         ref = rows[0][0][1]                          # callback_data like "f:1"
         staged, buttons = bot.handle_callback(OWNER, ref)
         self.assertIn("드라이런", staged)             # shows what would be sent
@@ -100,7 +107,7 @@ class TestBuyCallback(unittest.TestCase):
 
     def test_cancel_clears_pending(self):
         bot = make_bot([fav()])
-        _, rows = bot.poll_favorites()
+        rows = bot.poll_favorites()[0][1]
         bot.handle_callback(OWNER, rows[0][0][1])
         self.assertIn(OWNER, bot._pending)
         reply, _ = bot.handle_callback(OWNER, "fav_cancel")
