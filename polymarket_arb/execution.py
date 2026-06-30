@@ -325,26 +325,37 @@ class PolymarketExecutor:
             )
 
     def usdc_balance(self) -> float:
-        """Tradeable USDC (collateral) balance from the CLOB. Needs the signing key.
+        """USDC held by the funder address, read on-chain (Polygon ``balanceOf``).
 
-        Read-only, so it works regardless of EXECUTION_MODE as long as
-        ``POLYMARKET_PRIVATE_KEY`` is set (L2 creds are derived if absent).
-        UNRUN here (no key/network) — validate against your client version.
+        This reads the deposit/proxy wallet's USDC directly, so it doesn't depend
+        on the signer, signature_type, or L2 API creds — only ``POLYMARKET_FUNDER``
+        (the public deposit address). Sums both USDC.e (Polymarket's collateral)
+        and native USDC so it matches the site's "Cash" regardless of variant.
         """
-        client = self._client_or_raise()
-        try:  # pragma: no cover - requires py-clob-client + network
-            from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+        addr = self.config.funder
+        if not addr:
+            raise ExecutionError("POLYMARKET_FUNDER (Polymarket deposit address) is required")
+        import requests  # local import: only needed for the live balance read
 
-            params = BalanceAllowanceParams(
-                asset_type=AssetType.COLLATERAL,
-                signature_type=self.config.signature_type or 0,
-            )
-            resp = client.get_balance_allowance(params)
-        except ImportError as exc:  # pragma: no cover
-            raise ExecutionError(
-                "py-clob-client not installed (pip install -r requirements-bot.txt)"
-            ) from exc
-        return _parse_usdc_balance(resp)
+        total = 0.0
+        for token in (_USDC_E, _USDC_NATIVE):
+            try:
+                resp = requests.post(
+                    self.config.rpc_url,
+                    json={
+                        "jsonrpc": "2.0", "id": 1, "method": "eth_call",
+                        "params": [
+                            {"to": token, "data": _erc20_balanceof_data(addr)},
+                            "latest",
+                        ],
+                    },
+                    timeout=20,
+                )
+                resp.raise_for_status()
+                total += _hex_to_usdc(resp.json().get("result"))
+            except requests.RequestException as exc:
+                raise ExecutionError(f"Polygon RPC error: {exc}") from exc
+        return total
 
     def _unwind(self, filled_outcomes: list[str], plan: OrderPlan) -> str:  # pragma: no cover
         """Best-effort flatten of legs that filled before an abort."""
@@ -356,18 +367,23 @@ class PolymarketExecutor:
         )
 
 
-def _parse_usdc_balance(resp) -> float:
-    """USDC from a CLOB get_balance_allowance response.
+# Polygon collateral tokens (6 decimals). Polymarket uses USDC.e; native USDC is
+# summed too so the balance matches the site's "Cash" whichever variant holds it.
+_USDC_E = "0x2791bca1f2de4661ed88a30c99a7a9449aa84174"
+_USDC_NATIVE = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359"
 
-    The CLOB returns the collateral ``balance`` as a string of base units (USDC
-    has 6 decimals), e.g. "1500000" -> $1.50. A value that already contains a
-    decimal point is treated as human USDC as-is.
-    """
-    raw = resp.get("balance") if isinstance(resp, dict) else resp
-    if raw is None:
-        raise ExecutionError("balance missing from CLOB response")
-    s = str(raw).strip()
-    return float(s) if "." in s else int(s) / 1_000_000
+
+def _erc20_balanceof_data(address: str) -> str:
+    """ABI calldata for ERC-20 ``balanceOf(address)``: selector + 32-byte address."""
+    addr = address.lower().removeprefix("0x")
+    return "0x70a08231" + addr.rjust(64, "0")
+
+
+def _hex_to_usdc(hex_result) -> float:
+    """A hex ``eth_call`` result (USDC base units, 6 decimals) -> USDC float."""
+    if not hex_result or hex_result in ("0x", "0x0"):
+        return 0.0
+    return int(hex_result, 16) / 1_000_000
 
 
 def _order_succeeded(resp) -> bool:  # pragma: no cover - shape depends on client version

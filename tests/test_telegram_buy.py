@@ -93,28 +93,28 @@ class TestFavoritesNow(unittest.TestCase):
 
 
 class TestBalance(unittest.TestCase):
-    def test_parse_base_units(self):
-        from polymarket_arb.execution import _parse_usdc_balance
-        self.assertAlmostEqual(_parse_usdc_balance({"balance": "1500000"}), 1.5)
+    def test_balanceof_calldata(self):
+        from polymarket_arb.execution import _erc20_balanceof_data
+        d = _erc20_balanceof_data("0xC16CBCC9590952d72a1ff3e59854871ca9b0CB32")
+        self.assertTrue(d.startswith("0x70a08231"))   # balanceOf selector
+        self.assertEqual(len(d), 10 + 64)             # selector + 32-byte arg
+        self.assertTrue(d.endswith("c16cbcc9590952d72a1ff3e59854871ca9b0cb32"))
 
-    def test_parse_decimal_passthrough(self):
-        from polymarket_arb.execution import _parse_usdc_balance
-        self.assertAlmostEqual(_parse_usdc_balance({"balance": "12.34"}), 12.34)
+    def test_hex_to_usdc(self):
+        from polymarket_arb.execution import _hex_to_usdc
+        self.assertAlmostEqual(_hex_to_usdc(hex(6_500_000)), 6.5)  # $6.50
+        self.assertEqual(_hex_to_usdc("0x"), 0.0)
+        self.assertEqual(_hex_to_usdc(None), 0.0)
 
-    def test_parse_missing_raises(self):
-        from polymarket_arb.execution import _parse_usdc_balance
-        with self.assertRaises(ExecutionError):
-            _parse_usdc_balance({})
-
-    def test_balance_command_without_key(self):
-        bot = make_bot([])  # dry-run, no POLYMARKET_PRIVATE_KEY
-        self.assertIn("POLYMARKET_PRIVATE_KEY", bot.handle(OWNER, "/balance"))
+    def test_balance_command_without_funder(self):
+        bot = make_bot([])  # no POLYMARKET_FUNDER configured
+        self.assertIn("POLYMARKET_FUNDER", bot.handle(OWNER, "/balance"))
 
     def test_balance_command_success(self):
         bot = make_bot([])
-        bot.exec_config.private_key = "0xabc"          # pretend a key is set
-        bot.executor.usdc_balance = lambda: 42.5       # stub the network call
-        self.assertIn("$42.50", bot.handle(OWNER, "/balance"))
+        bot.exec_config.funder = "0xC16CBCC9590952d72a1ff3e59854871ca9b0CB32"
+        bot.executor.usdc_balance = lambda: 6.5        # stub the on-chain read
+        self.assertIn("$6.50", bot.handle(OWNER, "/balance"))
 
 
 class TestBuyCallback(unittest.TestCase):
