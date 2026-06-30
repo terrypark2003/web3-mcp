@@ -19,10 +19,11 @@ fill-or-kill and, if any leg fails, attempts to unwind the legs that did fill.
 That unwind can slip. Test in dry-run with $1 first, and watch the first live
 fills by hand.
 
-The live order-placement calls use the official ``py-clob-client``. They are
-written to its documented interface but CANNOT be tested from this sandbox
-(no network, no credentials), so VALIDATE them against your installed client
-version before trusting real money to them.
+The live order-placement calls use the official ``py-clob-client-v2`` (CLOB V2;
+the V1 ``py-clob-client`` no longer works against production as of 2026-04-28).
+They are written to its documented interface but CANNOT be tested from this
+sandbox (no network, no credentials), so VALIDATE them against your installed
+client version before trusting real money to them.
 """
 
 from __future__ import annotations
@@ -171,6 +172,7 @@ class ExecutionConfig:
     funder: Optional[str] = None
     signature_type: Optional[int] = None  # 0=EOA, 1=email/Magic proxy, 2=browser-wallet proxy
     rpc_url: Optional[str] = None  # POLYGON_RPC_URL override; falls back to public list
+    collateral_token: Optional[str] = None  # POLYMARKET_COLLATERAL_TOKEN (e.g. pUSD) for /balance
     clob_host: str = "https://clob.polymarket.com"
 
     @classmethod
@@ -193,6 +195,7 @@ class ExecutionConfig:
                 if env.get("POLYMARKET_SIGNATURE_TYPE") else None
             ),
             rpc_url=env.get("POLYGON_RPC_URL") or None,
+            collateral_token=env.get("POLYMARKET_COLLATERAL_TOKEN") or None,
         )
 
     def live_ready(self) -> tuple[bool, list[str]]:
@@ -244,11 +247,11 @@ class PolymarketExecutor:
         if not ready:
             raise ExecutionError(f"missing credentials for live mode: {missing}")
         try:
-            from py_clob_client.client import ClobClient
-            from py_clob_client.clob_types import ApiCreds
+            from py_clob_client_v2.client import ClobClient
+            from py_clob_client_v2.clob_types import ApiCreds
         except ImportError as exc:  # pragma: no cover - depends on optional extra
             raise ExecutionError(
-                "py-clob-client not installed (pip install -r requirements-bot.txt)"
+                "py-clob-client-v2 not installed (pip install -r requirements-bot.txt)"
             ) from exc
 
         # signature_type / funder depend on the account: 0 = trade directly from
@@ -274,7 +277,8 @@ class PolymarketExecutor:
         else:
             # Derive (or create) the L2 API creds from the signing key — one
             # network call, so the user only has to provide the private key.
-            client.set_api_creds(client.create_or_derive_api_creds())
+            # (V2 renamed create_or_derive_api_creds -> create_or_derive_api_key.)
+            client.set_api_creds(client.create_or_derive_api_key())
         self._client = client
         return self._client
 
@@ -291,8 +295,8 @@ class PolymarketExecutor:
         client = self._client_or_raise()
         filled: list[str] = []
         try:  # pragma: no cover - requires live network + credentials
-            from py_clob_client.clob_types import OrderArgs
-            from py_clob_client.order_builder.constants import BUY
+            from py_clob_client_v2.clob_types import OrderArgs
+            from py_clob_client_v2.order_builder.constants import BUY
 
             for leg in plan.legs:
                 args = OrderArgs(
@@ -301,7 +305,9 @@ class PolymarketExecutor:
                     size=round(leg.size, 2),
                     side=BUY,
                 )
-                resp = client.create_and_post_order(args)  # FOK semantics vary by version
+                # V2 create_order auto-resolves tick_size + neg_risk per token,
+                # so a plain call works for both regular and neg-risk markets.
+                resp = client.create_and_post_order(args)
                 if not _order_succeeded(resp):
                     raise ExecutionError(f"leg '{leg.outcome}' did not fill: {resp}")
                 filled.append(leg.outcome)
@@ -325,22 +331,31 @@ class PolymarketExecutor:
             )
 
     def usdc_balance(self) -> float:
-        """USDC held by the funder address, read on-chain (Polygon ``balanceOf``).
+        """Collateral held by the funder address, read on-chain (``balanceOf``).
 
-        This reads the deposit/proxy wallet's USDC directly, so it doesn't depend
-        on the signer, signature_type, or L2 API creds — only ``POLYMARKET_FUNDER``
-        (the public deposit address). Sums both USDC.e (Polymarket's collateral)
-        and native USDC so it matches the site's "Cash" regardless of variant.
+        Reads the deposit/proxy wallet's balance directly, so it doesn't depend on
+        the signer, signature_type, or L2 API creds — only ``POLYMARKET_FUNDER``
+        (the public deposit address). Sums the configured collateral token (set
+        ``POLYMARKET_COLLATERAL_TOKEN`` to the pUSD address for CLOB V2) plus
+        USDC.e and native USDC, so it matches the site's "Cash" across variants.
         """
         addr = self.config.funder
         if not addr:
             raise ExecutionError("POLYMARKET_FUNDER (Polymarket deposit address) is required")
         import requests  # local import: only needed for the live balance read
 
+        # CLOB V2 moved collateral to pUSD; set POLYMARKET_COLLATERAL_TOKEN to its
+        # address and it's summed first. USDC.e / native USDC stay in the list so a
+        # pre-migration or partially-migrated balance still shows.
+        tokens: list[str] = []
+        if self.config.collateral_token:
+            tokens.append(self.config.collateral_token)
+        tokens += [t for t in (_USDC_E, _USDC_NATIVE) if t not in tokens]
+
         # Public RPCs go down / start returning 401 / rate-limit without warning,
         # so try a list. A user-pinned POLYGON_RPC_URL is tried first; the keyless
         # public endpoints below are the fallback. The first endpoint that answers
-        # both token reads wins.
+        # all token reads wins.
         endpoints: list[str] = []
         if self.config.rpc_url:
             endpoints.append(self.config.rpc_url)
@@ -350,7 +365,7 @@ class PolymarketExecutor:
         for url in endpoints:
             try:
                 total = 0.0
-                for token in (_USDC_E, _USDC_NATIVE):
+                for token in tokens:
                     resp = requests.post(
                         url,
                         json={

@@ -3,8 +3,9 @@
 # only if you run the Telegram bot or place live orders.
 # [job-queue] extra powers the proactive alert loop.
 python-telegram-bot[job-queue]>=20,<22
-# Polymarket rejects orders signed by old clients ("invalid order version, please
-# use the latest clob-client"). Pin a modern floor — verified API-compatible with
-# our usage (ClobClient/OrderArgs/create_and_post_order). Bumping this string also
-# busts Docker's pip layer cache so a redeploy actually reinstalls the new version.
-py-clob-client>=0.34
+# Polymarket migrated to CLOB V2 on 2026-04-28 (new Exchange contracts + pUSD
+# collateral). V1 clients — including the last V1 release py-clob-client 0.34.6 —
+# sign V1-shaped orders the V2 exchange rejects with "invalid order version". The
+# V2 SDK is a separate package. API is near-identical for our usage (ClobClient/
+# OrderArgs/create_and_post_order; create_or_derive_api_creds -> _api_key).
+py-clob-client-v2>=1.0.1

@@ -129,7 +129,16 @@ USDC on Polygon):
 | `MAX_STAKE_USDC` | `1` (per-trade cap) | recommended |
 | `POLYMARKET_PRIVATE_KEY` | signing wallet key — **dedicated wallet, small funds** | **yes** |
 | `POLYMARKET_FUNDER` | proxy/funder address (only if you use a Polymarket proxy wallet) | if proxy |
+| `POLYMARKET_SIGNATURE_TYPE` | `0` EOA / `1` email-Magic proxy / `2` browser proxy | if proxy |
+| `POLYMARKET_COLLATERAL_TOKEN` | pUSD contract address — makes `/balance` show CLOB V2 cash | optional |
 | `POLYMARKET_API_KEY` / `_API_SECRET` / `_API_PASSPHRASE` | L2 API creds | **no — auto-derived** |
+
+> **CLOB V2 (since 2026-04-28).** Trading uses the `py-clob-client-v2` SDK; the
+> old V1 client no longer works against production (orders 403 with "invalid
+> order version"). Collateral moved from USDC.e to **pUSD** — funds in your
+> Polymarket wallet auto-migrated. `/balance` reads on-chain `balanceOf`, so set
+> `POLYMARKET_COLLATERAL_TOKEN` to the pUSD address (find it under Token Holdings
+> for your funder on polygonscan) for the display to match the site.
 
 **You only need `POLYMARKET_PRIVATE_KEY`.** The three L2 API creds are *not*
 found in any UI — they're derived from the key. The bot does that for you on
