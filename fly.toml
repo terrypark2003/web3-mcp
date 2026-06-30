@@ -1,0 +1,18 @@
+# Fly.io config for the always-on Telegram bot (worker — no inbound HTTP).
+# Rename `app` to something globally unique (or let `fly launch` set it).
+# Set secrets with `fly secrets set ...` — never commit them. See DEPLOY.md.
+app = "polymarket-fav-bot"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# A polling bot exposes no port, so there is no [http_service]. With no service,
+# the machine stays running (it is not auto-stopped on idle) — exactly what a
+# long-poll bot needs.
+[processes]
+  app = "python -m polymarket_arb.telegram_bot"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
