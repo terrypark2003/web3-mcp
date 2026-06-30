@@ -116,6 +116,55 @@ class TestBalance(unittest.TestCase):
         bot.executor.usdc_balance = lambda: 6.5        # stub the on-chain read
         self.assertIn("$6.50", bot.handle(OWNER, "/balance"))
 
+    def test_balance_rotates_past_dead_rpc(self):
+        # A public RPC that 401s (like polygon-rpc.com did) must not break /balance:
+        # the read falls through to the next endpoint instead of erroring out.
+        import requests
+        from unittest import mock
+
+        from polymarket_arb.execution import _USDC_E
+
+        cfg = ExecutionConfig.from_env({})       # rpc_url None -> uses the public list
+        cfg.funder = "0xC16CBCC9590952d72a1ff3e59854871ca9b0CB32"
+        ex = PolymarketExecutor(cfg)
+
+        class FakeResp:
+            def __init__(self, status, result=None):
+                self.status_code, self._result = status, result
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise requests.HTTPError(f"{self.status_code} Unauthorized")
+
+            def json(self):
+                return {"jsonrpc": "2.0", "id": 1, "result": self._result}
+
+        seen = []
+
+        def fake_post(url, **kwargs):
+            seen.append(url)
+            if "publicnode" in url:              # first endpoint is down (401)
+                return FakeResp(401)
+            to = kwargs["json"]["params"][0]["to"]
+            return FakeResp(200, hex(6_500_000) if to == _USDC_E else "0x0")
+
+        with mock.patch("requests.post", side_effect=fake_post):
+            self.assertAlmostEqual(ex.usdc_balance(), 6.5)
+        self.assertTrue(any("publicnode" in u for u in seen))   # tried the dead one
+        self.assertGreater(len(seen), 1)                        # then moved on
+
+    def test_balance_all_rpcs_dead_raises(self):
+        import requests
+        from unittest import mock
+
+        cfg = ExecutionConfig.from_env({})
+        cfg.funder = "0xC16CBCC9590952d72a1ff3e59854871ca9b0CB32"
+        ex = PolymarketExecutor(cfg)
+        with mock.patch("requests.post", side_effect=requests.HTTPError("401")):
+            with self.assertRaises(ExecutionError) as ctx:
+                ex.usdc_balance()
+        self.assertIn("POLYGON_RPC_URL", str(ctx.exception))     # actionable hint
+
 
 class TestBuyCallback(unittest.TestCase):
     def test_unauthorized(self):
