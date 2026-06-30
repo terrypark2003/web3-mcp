@@ -116,6 +116,49 @@ def build_order_plan(
     )
 
 
+FAV_BUY = "FAV_BUY"  # a single-outcome "buy ~$1 of a favorite" order (NOT risk-free)
+
+
+def build_single_buy_plan(
+    token_id: str,
+    outcome: str,
+    price: float,
+    market_id: str = "",
+    question: str = "",
+    *,
+    dollars: float = 1.0,
+    slippage: float = 0.01,
+) -> OrderPlan:
+    """Size a single-outcome buy of about ``dollars`` USDC at ``price``.
+
+    This is the "tap to buy $1" path for a favorite — NOT arbitrage. You buy
+    ``dollars/price`` shares; if the outcome wins each share redeems $1, and if
+    it loses you lose the stake. ``slippage`` lifts the limit above the ask so a
+    marketable order fills. Capping ``dollars`` is the caller's job (the bot
+    passes $1).
+    """
+    if price <= 0:
+        raise ExecutionError("non-positive price")
+    if dollars <= 0:
+        raise ExecutionError("non-positive dollars")
+    limit_price = min(1.0, price * (1.0 + slippage))
+    shares = round(dollars / price, 2)
+    if shares <= 0:
+        raise ExecutionError("computed size is non-positive")
+    total_cost = limit_price * shares
+    return OrderPlan(
+        market_id=market_id,
+        question=question,
+        kind=FAV_BUY,
+        legs=[OrderLeg(token_id=token_id, outcome=outcome, side="BUY",
+                       price=limit_price, size=shares)],
+        sets=shares,
+        total_cost=total_cost,
+        expected_payoff=shares,           # if it wins, each share -> $1
+        expected_profit=shares - total_cost,
+    )
+
+
 @dataclass
 class ExecutionConfig:
     mode: str = DRY_RUN

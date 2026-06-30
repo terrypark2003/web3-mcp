@@ -316,6 +316,26 @@ one is likely, soon, small, and risked. Each alert says so, and shows the payout
 the market-implied win probability, and the time to settlement. Pure Polymarket
 data — needs only the Telegram secrets, no odds-API key. See `favorites.py`.
 
+### Tap-to-buy $1 from Telegram (interactive bot only)
+
+The long-running bot (`telegram_bot.py`) posts the same favorites with a **`$1
+매수` inline button** per market. The flow is deliberately two-step:
+
+1. **Tap the button** → the bot builds a single-outcome ~$1 order and replies
+   with exactly what it would send (`build_single_buy_plan`, kind `FAV_BUY`).
+2. **Tap Confirm** → it places it — but only if `EXECUTION_MODE=live` and the
+   credentials are present. **Default is dry-run**, which prints the order and
+   places nothing.
+
+Bounds on every order: the **$1 cap** (`FAV_BUY_USD`) and the price band
+(`NOTIFY_FAV_MIN_PRICE…MAX_PRICE`). This is *not* the GitHub-Actions cron — the
+cron is one-way and can't take a tap; the buy buttons need the interactive bot
+running on a machine with your Polymarket wallet key + USDC. As with all live
+trading here, **dry-run first** and watch the first fills by hand — the
+`py-clob-client` order path is written to the documented interface but is not
+exercised by the test suite. Reuse the existing `EXECUTION_MODE` / credential
+setup in **Telegram bot & execution** above.
+
 ## Gemini: a plain-language analyst (not the oracle)
 
 Gemini is wired in as an **explanation / query layer over the real numbers** —
