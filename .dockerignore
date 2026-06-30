@@ -1,0 +1,10 @@
+.git
+.github
+tests
+**/__pycache__
+*.pyc
+.env
+notify_state.json
+public
+api
+*.md
