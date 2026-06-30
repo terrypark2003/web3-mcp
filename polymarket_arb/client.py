@@ -32,30 +32,46 @@ class PolymarketClient:
         self.session = session or requests.Session()
         self.session.headers.setdefault("User-Agent", "polymarket-arb-scanner/0.1")
 
-    def active_markets(self, page_size: int = 100, max_pages: int = 200) -> list[dict]:
+    def active_markets(
+        self,
+        page_size: int = 100,
+        max_pages: int = 200,
+        extra_params: dict | None = None,
+    ) -> list[dict]:
         """Fetch open, tradeable markets from Gamma (paginated).
 
         Gamma caps ``limit`` at 100 server-side, so we request 100 and advance
         the offset by however many rows actually came back, stopping only on an
         empty page. (Requesting 500 used to return 100 and trip a ``len < limit``
         early-break, so the scanner silently saw only the first 100 markets.)
+
+        Gamma also 422s once the offset runs past its pagination ceiling
+        (~2000); we stop with what we have instead of failing. ``extra_params``
+        lets callers narrow server-side — e.g. ``end_date_min`` / ``end_date_max``
+        to fetch only markets resolving in a window, which both sidesteps the
+        offset ceiling and is far cheaper.
         """
+        params = {
+            "active": "true",
+            "closed": "false",
+            "archived": "false",
+            "limit": page_size,
+        }
+        if extra_params:
+            params.update(extra_params)
         markets: list[dict] = []
         offset = 0
         for _ in range(max_pages):
-            resp = self.session.get(
-                f"{self.gamma_base}/markets",
-                params={
-                    "active": "true",
-                    "closed": "false",
-                    "archived": "false",
-                    "limit": page_size,
-                    "offset": offset,
-                },
-                timeout=self.timeout,
-            )
-            resp.raise_for_status()
-            batch = resp.json()
+            try:
+                resp = self.session.get(
+                    f"{self.gamma_base}/markets",
+                    params={**params, "offset": offset},
+                    timeout=self.timeout,
+                )
+                resp.raise_for_status()
+                batch = resp.json()
+            except requests.RequestException:
+                break
             if not batch:
                 break
             markets.extend(batch)
@@ -71,19 +87,22 @@ class PolymarketClient:
         events: list[dict] = []
         offset = 0
         for _ in range(max_pages):
-            resp = self.session.get(
-                f"{self.gamma_base}/events",
-                params={
-                    "active": "true",
-                    "closed": "false",
-                    "archived": "false",
-                    "limit": page_size,
-                    "offset": offset,
-                },
-                timeout=self.timeout,
-            )
-            resp.raise_for_status()
-            batch = resp.json()
+            try:
+                resp = self.session.get(
+                    f"{self.gamma_base}/events",
+                    params={
+                        "active": "true",
+                        "closed": "false",
+                        "archived": "false",
+                        "limit": page_size,
+                        "offset": offset,
+                    },
+                    timeout=self.timeout,
+                )
+                resp.raise_for_status()
+                batch = resp.json()
+            except requests.RequestException:
+                break
             if not batch:
                 break
             events.extend(batch)

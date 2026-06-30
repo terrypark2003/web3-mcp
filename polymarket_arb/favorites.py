@@ -18,7 +18,7 @@ a full 10%); this is the opposite trade-off: likely, soon, small, and risked.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 
@@ -146,7 +146,18 @@ def build_favorites_live(
     lo, hi = min_price - 0.04, max_price + 0.04
     window = max_days if max_days is not None else 1e9
 
-    markets = client.active_markets()
+    # Narrow server-side to markets resolving inside the window. This both
+    # sidesteps Gamma's offset ceiling (~2000) and avoids paging the whole book
+    # of long-dated markets just to throw them away. If Gamma ignores the params,
+    # the client-side ``within`` filter below still applies.
+    extra = None
+    if max_days is not None:
+        ref = now or datetime.now(timezone.utc)
+        extra = {
+            "end_date_min": ref.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end_date_max": (ref + timedelta(days=max_days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+    markets = client.active_markets(extra_params=extra)
     within = []
     for market in markets:
         days = days_until(market.get("endDate"), now)
