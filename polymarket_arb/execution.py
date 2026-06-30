@@ -391,6 +391,56 @@ class PolymarketExecutor:
             "Set POLYGON_RPC_URL to a working endpoint."
         )
 
+    def portfolio(self) -> dict:
+        """Total portfolio worth: cash (pUSD/USDC) + open positions' current value.
+
+        Positions come from Polymarket's public Data API (no auth), keyed by the
+        funder/proxy address; cash is the on-chain collateral read. Cash is
+        best-effort — if the RPC is down the positions are still returned (with
+        ``cash=None``) instead of failing the whole command.
+        """
+        addr = self.config.funder
+        if not addr:
+            raise ExecutionError("POLYMARKET_FUNDER (Polymarket deposit address) is required")
+        import requests  # local import: only needed for the live read
+
+        try:
+            cash = self.usdc_balance()
+        except ExecutionError:
+            cash = None
+
+        try:
+            resp = requests.get(
+                f"{_DATA_API}/positions", params={"user": addr}, timeout=20,
+            )
+            resp.raise_for_status()
+            raw = resp.json() or []
+        except requests.RequestException as exc:
+            raise ExecutionError(f"Polymarket data API error: {exc}") from exc
+
+        positions, pos_value, pnl = [], 0.0, 0.0
+        for p in raw:
+            val = _num(p.get("currentValue"))
+            positions.append({
+                "title": p.get("title") or p.get("slug") or "?",
+                "outcome": p.get("outcome") or "",
+                "value": val,
+                "cur_price": _num(p.get("curPrice")),
+                "pnl": _num(p.get("cashPnl")),
+                "redeemable": bool(p.get("redeemable")),
+            })
+            pos_value += val
+            pnl += _num(p.get("cashPnl"))
+        positions.sort(key=lambda x: x["value"], reverse=True)
+        return {
+            "cash": cash,
+            "positions_value": pos_value,
+            "total": pos_value + (cash or 0.0),
+            "pnl": pnl,
+            "positions": positions,
+            "count": len(positions),
+        }
+
     def _unwind(self, filled_outcomes: list[str], plan: OrderPlan) -> str:  # pragma: no cover
         """Best-effort flatten of legs that filled before an abort."""
         if not filled_outcomes:
@@ -399,6 +449,18 @@ class PolymarketExecutor:
             f"attempted to sell {filled_outcomes} at market — verify manually; "
             "unwind may have slipped"
         )
+
+
+# Polymarket public Data API (no auth) — open positions keyed by proxy address.
+_DATA_API = "https://data-api.polymarket.com"
+
+
+def _num(x) -> float:
+    """Coerce a possibly-string / None API number to float (0.0 on failure)."""
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # Polygon collateral tokens (6 decimals). Polymarket uses USDC.e; native USDC is

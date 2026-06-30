@@ -38,7 +38,8 @@ HELP = (
     "명령어:\n"
     "/fav1 - 1시간 내 정산 유력후보 (가장 임박)\n"
     "/fav3 - 3시간 내 / /fav6 - 6시간 내 / /fav9 - 9시간 내 / /fav12 - 12시간 내\n"
-    "/balance - 내 폴리마켓 USDC 잔고 확인\n"
+    "/balance - 내 폴리마켓 현금(pUSD) 잔고 확인\n"
+    "/portfolio - 총 자산(현금 + 포지션 평가액) + 미실현 손익\n"
     "/status - 모드·최대 금액·실거래 준비 상태\n"
     "/scan - 폴리마켓 컴플리트셋 차익 찾기\n"
     "/cross - 거래소 간 차익 (Kalshi vs 폴리마켓)\n"
@@ -157,6 +158,8 @@ class ArbBot:
             return self._status()
         if cmd in ("/balance", "/bal"):
             return self._balance()
+        if cmd in ("/portfolio", "/worth", "/pf"):
+            return self._portfolio()
         if cmd == "/scan":
             return self._scan()
         if cmd == "/cross":
@@ -437,6 +440,35 @@ class ArbBot:
         except Exception as exc:  # noqa: BLE001 - surface API/network errors to chat
             return f"잔고 조회 오류: {exc}"
         return f"💰 폴리마켓 USDC 잔고: ${bal:,.2f}"
+
+    def _portfolio(self) -> str:
+        if not self.exec_config.funder:
+            return ("포트폴리오를 보려면 POLYMARKET_FUNDER(폴리마켓 입금 주소)가 "
+                    "필요합니다 (Railway/Fly 변수에 설정).")
+        try:
+            pf = self.executor.portfolio()
+        except ExecutionError as exc:
+            return f"포트폴리오 조회 불가: {exc}"
+        except Exception as exc:  # noqa: BLE001 - surface API/network errors to chat
+            return f"포트폴리오 조회 오류: {exc}"
+
+        cash = pf["cash"]
+        if cash is None:
+            lines = [f"💼 포지션 평가액: ${pf['positions_value']:,.2f} "
+                     f"(현금 조회 실패 — 총합에 미포함)"]
+        else:
+            lines = [f"💼 포트폴리오 총 가치: ${pf['total']:,.2f}",
+                     f"  ├ 현금(pUSD): ${cash:,.2f}",
+                     f"  └ 포지션 {pf['count']}개: ${pf['positions_value']:,.2f}"]
+        sign = "+" if pf["pnl"] >= 0 else "-"
+        lines.append(f"  📈 미실현 손익: {sign}${abs(pf['pnl']):,.2f}")
+        for p in pf["positions"][:5]:
+            tag = " · 정산가능" if p["redeemable"] else ""
+            lines.append(f"• {p['title'][:32]} — {p['outcome'][:10]} "
+                         f"${p['value']:,.2f}{tag}")
+        if not pf["positions"]:
+            lines.append("(보유 포지션 없음)")
+        return "\n".join(lines)
 
     def _find(self, market_id: str) -> Optional[Opportunity]:
         for op in self.scan_fn():

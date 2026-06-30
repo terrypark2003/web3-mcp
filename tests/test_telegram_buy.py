@@ -229,6 +229,57 @@ class TestBalance(unittest.TestCase):
         self.assertIn(PUSD, queried)                          # the pUSD token was read
 
 
+class TestPortfolio(unittest.TestCase):
+    def test_portfolio_command_without_funder(self):
+        bot = make_bot([])
+        self.assertIn("POLYMARKET_FUNDER", bot.handle(OWNER, "/portfolio"))
+
+    def test_portfolio_command_formats_total(self):
+        bot = make_bot([])
+        bot.exec_config.funder = "0xC16CBCC9590952d72a1ff3e59854871ca9b0CB32"
+        bot.executor.portfolio = lambda: {
+            "cash": 6.5, "positions_value": 12.0, "total": 18.5, "pnl": 1.25,
+            "count": 2, "positions": [
+                {"title": "Will it rain", "outcome": "Yes", "value": 10.0,
+                 "cur_price": 0.9, "pnl": 1.0, "redeemable": False},
+                {"title": "Cup final", "outcome": "No", "value": 2.0,
+                 "cur_price": 0.5, "pnl": 0.25, "redeemable": True},
+            ],
+        }
+        out = bot.handle(OWNER, "/worth")
+        self.assertIn("$18.50", out)        # total
+        self.assertIn("$6.50", out)         # cash
+        self.assertIn("+$1.25", out)        # unrealized pnl
+        self.assertIn("정산가능", out)        # redeemable tag
+
+    def test_portfolio_parses_data_api(self):
+        import requests
+        from unittest import mock
+
+        cfg = ExecutionConfig.from_env({})
+        cfg.funder = "0xC16CBCC9590952d72a1ff3e59854871ca9b0CB32"
+        ex = PolymarketExecutor(cfg)
+        ex.usdc_balance = lambda: 6.5       # stub the on-chain cash read
+
+        class Resp:
+            def raise_for_status(self): pass
+            def json(self):
+                return [
+                    {"title": "A", "outcome": "Yes", "currentValue": "10.0",
+                     "curPrice": "0.9", "cashPnl": "1.0", "redeemable": False},
+                    {"title": "B", "outcome": "No", "currentValue": 2.5,
+                     "curPrice": 0.5, "cashPnl": -0.5, "redeemable": True},
+                ]
+
+        with mock.patch("requests.get", return_value=Resp()):
+            pf = ex.portfolio()
+        self.assertEqual(pf["cash"], 6.5)
+        self.assertAlmostEqual(pf["positions_value"], 12.5)
+        self.assertAlmostEqual(pf["total"], 19.0)         # 6.5 + 12.5
+        self.assertAlmostEqual(pf["pnl"], 0.5)            # 1.0 + (-0.5)
+        self.assertEqual(pf["positions"][0]["title"], "A")  # sorted by value desc
+
+
 class TestBuyCallback(unittest.TestCase):
     def test_unauthorized(self):
         bot = make_bot([fav()])
