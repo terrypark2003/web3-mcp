@@ -2,13 +2,20 @@
 # Rename `app` to something globally unique (or let `fly launch` set it).
 # Set secrets with `fly secrets set ...` — never commit them. See DEPLOY.md.
 #
-# IMPORTANT — region must be a Polymarket-Allowed jurisdiction, or live orders
-# fail with `403 Trading restricted in your region`. The geoblock keys off the
-# SERVER's IP, not yours. `iad`/`sjc` (US) are Blocked; `sin` (Singapore) is
-# Close-only (can't OPEN positions). `hkg` (Hong Kong) is Allowed and is the
-# lowest-latency Allowed region to Korea. See DEPLOY.md "Pick an Allowed region".
+# IMPORTANT — region must let Polymarket's CLOB *API* place orders, or live
+# orders fail with `403 Trading restricted in your region`. The geoblock keys
+# off the SERVER's IP, not yours. Per Polymarket's geoblock list:
+#   `iad`/`sjc`/`ord` (US), `syd` (Australia), `fra` (Germany), `ams`
+#     (Netherlands), `cdg` (France), `lhr` (UK), `gru` (Brazil) → Blocked.
+#   `sin` (Singapore) → Close-only (can CLOSE but not OPEN a $1 buy).
+#   `hkg` (Hong Kong) → API-allowed, but Fly has DEPRECATED it (can't provision).
+#   `nrt` (Tokyo, Japan) → "Frontend UI restricted" only; the API is NOT
+#     restricted, and this bot trades via the CLOB API — so orders go through.
+#     It's also the closest live Fly region to Korea. This is the pick.
+#   `bom` (Mumbai, India) → fully allowed fallback if Tokyo ever blocks.
+# See DEPLOY.md "Pick an Allowed region".
 app = "polymarket-fav-bot"
-primary_region = "hkg"
+primary_region = "nrt"
 
 [build]
   dockerfile = "Dockerfile"
