@@ -80,6 +80,19 @@ class TestExecutionConfig(unittest.TestCase):
         self.assertEqual(cfg.live_ready(), (True, []))   # creds derived at connect
         self.assertFalse(cfg.has_explicit_api_creds)
 
+    def test_signature_type_parsed_from_env(self):
+        cfg = ExecutionConfig.from_env({
+            "POLYMARKET_PRIVATE_KEY": "0xabc",
+            "POLYMARKET_FUNDER": "0xproxy",
+            "POLYMARKET_SIGNATURE_TYPE": "1",
+        })
+        self.assertEqual(cfg.signature_type, 1)
+        self.assertEqual(cfg.funder, "0xproxy")
+
+    def test_signature_type_absent_is_none(self):
+        cfg = ExecutionConfig.from_env({"POLYMARKET_PRIVATE_KEY": "0xabc"})
+        self.assertIsNone(cfg.signature_type)
+
     def test_live_ready_true_with_all_creds(self):
         cfg = ExecutionConfig.from_env({
             "EXECUTION_MODE": "live",

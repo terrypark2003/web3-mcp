@@ -169,6 +169,7 @@ class ExecutionConfig:
     api_passphrase: Optional[str] = None
     private_key: Optional[str] = None
     funder: Optional[str] = None
+    signature_type: Optional[int] = None  # 0=EOA, 1=email/Magic proxy, 2=browser-wallet proxy
     rpc_url: str = "https://polygon-rpc.com"
     clob_host: str = "https://clob.polymarket.com"
 
@@ -187,6 +188,10 @@ class ExecutionConfig:
             api_passphrase=env.get("POLYMARKET_API_PASSPHRASE"),
             private_key=env.get("POLYMARKET_PRIVATE_KEY"),
             funder=env.get("POLYMARKET_FUNDER"),
+            signature_type=(
+                int(env["POLYMARKET_SIGNATURE_TYPE"])
+                if env.get("POLYMARKET_SIGNATURE_TYPE") else None
+            ),
             rpc_url=env.get("POLYGON_RPC_URL") or "https://polygon-rpc.com",
         )
 
@@ -246,14 +251,20 @@ class PolymarketExecutor:
                 "py-clob-client not installed (pip install -r requirements-bot.txt)"
             ) from exc
 
-        # NOTE: signature_type / funder depend on whether you trade from an EOA
-        # or a Polymarket proxy wallet. VALIDATE against your account setup.
-        client = ClobClient(
-            host=self.config.clob_host,
-            key=self.config.private_key,
-            chain_id=137,
-            funder=self.config.funder,
-        )
+        # signature_type / funder depend on the account: 0 = trade directly from
+        # the signing EOA; 1 = email/Magic proxy; 2 = browser-wallet proxy. For a
+        # Polymarket-funded account set POLYMARKET_SIGNATURE_TYPE + POLYMARKET_FUNDER
+        # (your Polymarket deposit/proxy address) or orders sign from an unfunded EOA.
+        kwargs = {
+            "host": self.config.clob_host,
+            "key": self.config.private_key,
+            "chain_id": 137,
+        }
+        if self.config.funder:
+            kwargs["funder"] = self.config.funder
+        if self.config.signature_type is not None:
+            kwargs["signature_type"] = self.config.signature_type
+        client = ClobClient(**kwargs)
         if self.config.has_explicit_api_creds:
             client.set_api_creds(ApiCreds(
                 api_key=self.config.api_key,
