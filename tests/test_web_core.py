@@ -89,7 +89,7 @@ class TestStageConfirm(unittest.TestCase):
         self.assertIn("stage_id", r)
         self.assertEqual(r["plan"]["market_id"], "abc")
         self.assertFalse(r["will_place_live"])
-        self.assertIn("DRY-RUN", r["preview"])
+        self.assertIn("드라이런", r["preview"])
         # both legs present in the plan
         self.assertEqual(len(r["plan"]["legs"]), 2)
 

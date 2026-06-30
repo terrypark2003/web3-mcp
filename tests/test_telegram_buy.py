@@ -89,13 +89,13 @@ class TestBuyCallback(unittest.TestCase):
         _, rows = bot.poll_favorites()
         ref = rows[0][0][1]                          # callback_data like "f:1"
         staged, buttons = bot.handle_callback(OWNER, ref)
-        self.assertIn("DRY-RUN", staged)             # shows what would be sent
+        self.assertIn("드라이런", staged)             # shows what would be sent
         self.assertIn("무위험 아님", staged)
         self.assertIn(OWNER, bot._pending)           # plan staged
         self.assertEqual(buttons[0][0][1], "fav_confirm")
         # Confirm -> executes (dry-run places nothing)
         done, _ = bot.handle_callback(OWNER, "fav_confirm")
-        self.assertIn("NO ORDERS PLACED", done)
+        self.assertIn("주문 안 함", done)
         self.assertNotIn(OWNER, bot._pending)        # cleared after confirm
 
     def test_cancel_clears_pending(self):
