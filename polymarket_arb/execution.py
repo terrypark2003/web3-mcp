@@ -169,6 +169,7 @@ class ExecutionConfig:
     api_passphrase: Optional[str] = None
     private_key: Optional[str] = None
     funder: Optional[str] = None
+    signature_type: Optional[int] = None  # 0=EOA, 1=email/Magic proxy, 2=browser-wallet proxy
     rpc_url: str = "https://polygon-rpc.com"
     clob_host: str = "https://clob.polymarket.com"
 
@@ -187,19 +188,27 @@ class ExecutionConfig:
             api_passphrase=env.get("POLYMARKET_API_PASSPHRASE"),
             private_key=env.get("POLYMARKET_PRIVATE_KEY"),
             funder=env.get("POLYMARKET_FUNDER"),
+            signature_type=(
+                int(env["POLYMARKET_SIGNATURE_TYPE"])
+                if env.get("POLYMARKET_SIGNATURE_TYPE") else None
+            ),
             rpc_url=env.get("POLYGON_RPC_URL") or "https://polygon-rpc.com",
         )
 
     def live_ready(self) -> tuple[bool, list[str]]:
-        """Whether live trading has every credential it needs (no secrets logged)."""
-        required = {
-            "POLYMARKET_API_KEY": self.api_key,
-            "POLYMARKET_API_SECRET": self.api_secret,
-            "POLYMARKET_API_PASSPHRASE": self.api_passphrase,
-            "POLYMARKET_PRIVATE_KEY": self.private_key,
-        }
-        missing = [name for name, value in required.items() if not value]
+        """Whether live trading has what it needs (no secrets logged).
+
+        Only the signing key (`POLYMARKET_PRIVATE_KEY`) is required — the L2 API
+        creds (api_key/secret/passphrase) are *derived from that key* at connect
+        time if not supplied, so you don't have to hunt them down. Supplying them
+        explicitly still works and skips the derive call.
+        """
+        missing = [] if self.private_key else ["POLYMARKET_PRIVATE_KEY"]
         return (not missing, missing)
+
+    @property
+    def has_explicit_api_creds(self) -> bool:
+        return bool(self.api_key and self.api_secret and self.api_passphrase)
 
 
 def simulate(plan: OrderPlan, config: ExecutionConfig) -> str:
@@ -242,20 +251,31 @@ class PolymarketExecutor:
                 "py-clob-client not installed (pip install -r requirements-bot.txt)"
             ) from exc
 
-        creds = ApiCreds(
-            api_key=self.config.api_key,
-            api_secret=self.config.api_secret,
-            api_passphrase=self.config.api_passphrase,
-        )
-        # NOTE: signature_type / funder depend on whether you trade from an EOA
-        # or a Polymarket proxy wallet. VALIDATE against your account setup.
-        self._client = ClobClient(
-            host=self.config.clob_host,
-            key=self.config.private_key,
-            chain_id=137,
-            creds=creds,
-            funder=self.config.funder,
-        )
+        # signature_type / funder depend on the account: 0 = trade directly from
+        # the signing EOA; 1 = email/Magic proxy; 2 = browser-wallet proxy. For a
+        # Polymarket-funded account set POLYMARKET_SIGNATURE_TYPE + POLYMARKET_FUNDER
+        # (your Polymarket deposit/proxy address) or orders sign from an unfunded EOA.
+        kwargs = {
+            "host": self.config.clob_host,
+            "key": self.config.private_key,
+            "chain_id": 137,
+        }
+        if self.config.funder:
+            kwargs["funder"] = self.config.funder
+        if self.config.signature_type is not None:
+            kwargs["signature_type"] = self.config.signature_type
+        client = ClobClient(**kwargs)
+        if self.config.has_explicit_api_creds:
+            client.set_api_creds(ApiCreds(
+                api_key=self.config.api_key,
+                api_secret=self.config.api_secret,
+                api_passphrase=self.config.api_passphrase,
+            ))
+        else:
+            # Derive (or create) the L2 API creds from the signing key — one
+            # network call, so the user only has to provide the private key.
+            client.set_api_creds(client.create_or_derive_api_creds())
+        self._client = client
         return self._client
 
     def execute(self, plan: OrderPlan) -> ExecutionResult:

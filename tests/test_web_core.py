@@ -65,7 +65,8 @@ class TestRead(unittest.TestCase):
     def test_status_flags_missing_creds_in_live(self):
         s = make_service([], mode="live").status()
         self.assertFalse(s["live_ready"])
-        self.assertIn("POLYMARKET_API_KEY", s["missing_creds"])
+        # Only the signing key is strictly required (L2 creds derive from it).
+        self.assertIn("POLYMARKET_PRIVATE_KEY", s["missing_creds"])
 
     def test_opportunities_groups_three_feeds(self):
         svc = make_service([buy_set_op("abc")])
