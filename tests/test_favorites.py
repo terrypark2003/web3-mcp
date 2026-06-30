@@ -110,10 +110,10 @@ class _SpyClient:
         return {}
 
 
-def _mkt(i, hours, price=0.88):
+def _mkt(i, hours, price=0.88, question=None):
     end = (NOW + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {
-        "question": f"m{i}",
+        "question": question if question is not None else f"m{i}",
         "endDate": end,
         "outcomePrices": f'["{price}", "{round(1 - price, 2)}"]',
         "clobTokenIds": f'["tok{i}a", "tok{i}b"]',
@@ -157,6 +157,26 @@ class TestFavoritesSpeed(unittest.TestCase):
             books = client.order_books([f"t{i}" for i in range(120)], chunk_size=50)
         self.assertEqual(len(books), 120)               # all merged
         self.assertEqual(sorted(sizes), [20, 50, 50])   # chunked (no giant POST)
+
+    def test_excludes_crypto_by_default(self):
+        from polymarket_arb.favorites import build_favorites_live
+        markets = [
+            _mkt("btc", hours=1, question="Bitcoin Up or Down - June 30, 4AM ET"),
+            _mkt("temp", hours=2, question="Will the highest temperature in Houston be 90F?"),
+        ]
+        client = _SpyClient(markets)
+        build_favorites_live(client, min_price=0.80, max_price=0.91, min_size=1,
+                             max_days=1.0, now=NOW)
+        # Crypto dropped; only the 2h weather market is priced.
+        self.assertEqual(set(client.priced_ids), {"toktempa", "toktempb"})
+
+    def test_exclude_terms_empty_keeps_crypto(self):
+        from polymarket_arb.favorites import build_favorites_live
+        markets = [_mkt("btc", hours=1, question="Bitcoin Up or Down")]
+        client = _SpyClient(markets)
+        build_favorites_live(client, min_price=0.80, max_price=0.91, min_size=1,
+                             max_days=1.0, exclude_terms=[], now=NOW)
+        self.assertEqual(set(client.priced_ids), {"tokbtca", "tokbtcb"})  # not excluded
 
 
 if __name__ == "__main__":

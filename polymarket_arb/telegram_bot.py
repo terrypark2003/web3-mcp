@@ -77,6 +77,14 @@ def build_bot() -> ArbBot:
             return scan_world_cup_value_live(PolymarketClient(), OddsApiClient(odds_key))
 
     # Near-resolution favorites ("tap to buy $1"). Whole-pool, no odds key needed.
+    # NOTIFY_FAV_EXCLUDE: comma-separated question substrings to drop (unset =
+    # default crypto filter; empty string = keep everything).
+    _excl_raw = os.environ.get("NOTIFY_FAV_EXCLUDE")
+    _exclude_terms = (
+        None if _excl_raw is None
+        else [t.strip().lower() for t in _excl_raw.split(",") if t.strip()]
+    )
+
     def fav_scan_fn():
         from .client import PolymarketClient
         from .favorites import build_favorites_live
@@ -92,6 +100,7 @@ def build_bot() -> ArbBot:
             # Only price the soonest N candidates (keeps /fav fast); "더보기" pages
             # through them. Raise it if you want more pages.
             book_limit=int(os.environ.get("NOTIFY_FAV_BOOK_LIMIT", "120") or "120"),
+            exclude_terms=_exclude_terms,  # default: drop crypto Up/Down gambles
         )
 
     # Gemini = plain-language analyst over the real signals (never the oracle).
