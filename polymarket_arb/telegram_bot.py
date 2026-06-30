@@ -89,6 +89,9 @@ def build_bot() -> ArbBot:
             min_size=float(os.environ.get("NOTIFY_FAV_MIN_SIZE", "5") or "5"),
             # 0.5d = 12h, the widest bucket; favorites_now buckets into 3/6/9/12h.
             max_days=float(os.environ.get("NOTIFY_MAX_DAYS", "0.5") or "0.5"),
+            # Only price the soonest N candidates (keeps /fav fast); "더보기" pages
+            # through them. Raise it if you want more pages.
+            book_limit=int(os.environ.get("NOTIFY_FAV_BOOK_LIMIT", "120") or "120"),
         )
 
     # Gemini = plain-language analyst over the real signals (never the oracle).

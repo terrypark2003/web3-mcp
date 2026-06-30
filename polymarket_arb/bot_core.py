@@ -32,7 +32,8 @@ HELP = (
     "🔗 /fav1 /fav3 /fav6 /fav9 /fav12 — 해당 시간 내 정산되는 "
     "$1→약 $1.05~$1.15 '유력후보' 5개를 임박 순으로 보여줍니다. "
     "각 항목의 [🔗 폴리마켓에서 매수] 버튼을 누르면 그 마켓이 열려요 — "
-    "거기서 직접 매수하세요 (V2 이후 API 자동매수는 폴리마켓이 막아둠).\n"
+    "거기서 직접 매수하세요 (V2 이후 API 자동매수는 폴리마켓이 막아둠). "
+    "[➕ 더보기]로 다음 5개씩 넘겨봅니다.\n"
     "\n"
     "명령어:\n"
     "/fav1 - 1시간 내 정산 유력후보 (가장 임박)\n"
@@ -136,6 +137,7 @@ class ArbBot:
         self._broadcast_seen: set = set()
         self._fav_offered: dict[str, object] = {}  # short id -> FavoriteBet
         self._fav_counter: int = 0
+        self._fav_page: dict | None = None  # last /fav scan, paged via "더보기"
 
     def is_authorized(self, chat_id: int) -> bool:
         return chat_id == self.owner_id
@@ -202,12 +204,13 @@ class ArbBot:
     # -- Favorites: "tap to buy $1" (NOT risk-free) ----------------------- #
 
     def favorites_now(self, limit: int = 5, max_hours: float = 12.0) -> list:
-        """On-demand: the ``limit`` soonest-resolving favorites within ``max_hours``.
+        """On-demand: soonest-resolving favorites within ``max_hours``, paged by 5.
 
-        Returns ``[(message, button_rows)]`` — a single Telegram message with up
-        to ``limit`` numbered items (soonest first), a matching numbered link
-        button per item (opens the market on Polymarket to buy manually), and the
-        time-to-resolution on every line. NOT deduped. Empty list if none qualify.
+        Scans once, caches the full sorted list, and returns ``[(message, rows)]``
+        for the first ``limit`` items. A "더보기" button pages through the rest via
+        ``handle_callback("fav_more")`` — no re-scan. Each item has a numbered link
+        button that opens the market on Polymarket to buy manually. NOT deduped.
+        Empty list if none qualify.
 
         NOTE: the button opens the market instead of auto-buying. Polymarket's
         CLOB V2 (2026-04-28) requires the "deposit wallet flow" and rejects
@@ -225,19 +228,27 @@ class ArbBot:
             if hours is not None and 0 < hours <= max_hours:
                 timed.append((hours, f))
         timed.sort(key=lambda x: x[0])  # soonest first
-        top = timed[:limit]
-        if not top:
+        if not timed:
+            self._fav_page = None
             return []
+        # Cache the whole sorted list so "더보기" can page without re-scanning.
+        self._fav_page = {"hours": max_hours, "items": timed, "offset": 0, "limit": limit}
+        return [self._render_fav_page()]
 
+    def _render_fav_page(self) -> tuple:
+        """Render the current page of the cached favorites and advance the offset."""
+        page = self._fav_page
+        items, off, limit = page["items"], page["offset"], page["limit"]
+        chunk = items[off:off + limit]
+        total = len(items)
         lines = [
-            f"🔗 {max_hours:g}시간 내 유력후보 (무위험 아님 — 버튼을 누르면 "
-            f"폴리마켓에서 열려요, 거기서 직접 매수):"
+            f"🔗 {page['hours']:g}시간 내 유력후보 {off + 1}–{off + len(chunk)}/{total} "
+            f"(무위험 아님 — 버튼=폴리마켓에서 직접 매수):"
         ]
         rows = []
-        for i, (hours, f) in enumerate(top, start=1):
+        for i, (hours, f) in enumerate(chunk, start=off + 1):
             self._fav_counter += 1
-            ref = f"f:{self._fav_counter}"
-            self._fav_offered[ref] = f  # kept for the (disabled) auto-buy path
+            self._fav_offered[f"f:{self._fav_counter}"] = f  # kept for disabled auto-buy
             payout = (1.0 / f.price) if f.price else 0.0
             cents = f.price * 100
             lines.append(
@@ -249,7 +260,12 @@ class ArbBot:
                 f"{i}) 🔗 폴리마켓에서 매수 — {f.outcome[:10]} {cents:.0f}¢", market_url,
             )])
         lines.append("⚠️ 무위험 아님: 적중 시 소액 이익, 빗나가면 전액 손실.")
-        return [("\n".join(lines), rows)]
+        page["offset"] = off + len(chunk)
+        if page["offset"] < total:
+            remaining = total - page["offset"]
+            nxt = min(limit, remaining)
+            rows.append([(f"➕ 더보기 (다음 {nxt}개 · 남은 {remaining}개)", "fav_more")])
+        return "\n".join(lines), rows
 
     def handle_callback(self, chat_id: int, data: str):
         """Handle an inline-button tap. Returns ``(reply_text, button_rows|None)``.
@@ -261,6 +277,11 @@ class ArbBot:
         if not self.is_authorized(chat_id):
             return "Unauthorized.", None
         data = (data or "").strip()
+
+        if data == "fav_more":
+            if not self._fav_page or self._fav_page["offset"] >= len(self._fav_page["items"]):
+                return "더 보여줄 후보가 없어요. /fav 로 다시 조회하세요.", None
+            return self._render_fav_page()
 
         if data == "fav_cancel":
             self._pending.pop(chat_id, None)

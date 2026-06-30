@@ -128,6 +128,7 @@ def build_favorites_live(
     max_price: float = 0.91,
     min_size: float = 1.0,
     max_days: Optional[float] = 2.0,
+    book_limit: Optional[int] = 120,
     now: Optional[datetime] = None,
     debug: bool = False,
 ) -> list[FavoriteBet]:
@@ -173,10 +174,18 @@ def build_favorites_live(
         if any(p is not None and lo <= p <= hi for p in prices):
             candidates.append(market)
 
+    # The book fetch is the slow step, and callers only surface the few
+    # soonest-resolving favorites — so price just the soonest in-band candidates
+    # instead of fetching a book for every one. (The indicative-price pre-filter
+    # already trimmed to plausible favorites; this caps the expensive part.)
+    candidates.sort(key=lambda m: (days_until(m.get("endDate"), now) is None,
+                                   days_until(m.get("endDate"), now) or 0.0))
+    priced = candidates if book_limit is None else candidates[:book_limit]
+
     # One-line funnel summary in every run's log makes a silent feed diagnosable
     # at a glance; the per-market dump is only for deep debugging.
     print(f"[favorites] markets={len(markets)} within_{max_days}d={len(within)} "
-          f"in_band[{lo:.2f},{hi:.2f}]={len(candidates)}", flush=True)
+          f"in_band[{lo:.2f},{hi:.2f}]={len(candidates)} priced={len(priced)}", flush=True)
     if debug:
         for m in within[:25]:
             d = days_until(m.get("endDate"), now)
@@ -184,12 +193,12 @@ def build_favorites_live(
                   f"{m.get('outcomePrices')}", flush=True)
 
     token_ids: list[str] = []
-    for market in candidates:
+    for market in priced:
         token_ids.extend(str(t) for t in _maybe_json_list(market.get("clobTokenIds")))
     books = client.order_books(token_ids)
 
     sets = [
-        cs for cs in (complete_set_from_market(m, books) for m in candidates)
+        cs for cs in (complete_set_from_market(m, books) for m in priced)
         if cs is not None
     ]
     return find_favorites(

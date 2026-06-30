@@ -64,10 +64,30 @@ class TestFavoritesNow(unittest.TestCase):
         self.assertTrue(label.startswith("1)"))
 
     def test_limits_to_five(self):
-        favs = [fav(market_id=f"m{i}", token_id=f"t{i}", hours=2.0) for i in range(8)]
+        favs = [fav(market_id=f"m{i}", token_id=f"t{i}", hours=2.0 + i * 0.01)
+                for i in range(8)]
         chunks = make_bot(favs).favorites_now()
         self.assertEqual(len(chunks), 1)
-        self.assertEqual(len(chunks[0][1]), 5)       # only 5, in one message
+        rows = chunks[0][1]
+        item_rows = [r for r in rows if r[0][1].startswith("http")]
+        self.assertEqual(len(item_rows), 5)          # 5 items per page
+        self.assertEqual(rows[-1][0][1], "fav_more")  # + a 더보기 button (3 remain)
+
+    def test_more_button_pages_next_five(self):
+        favs = [fav(market_id=f"m{i}", token_id=f"t{i}", hours=2.0 + i * 0.01)
+                for i in range(8)]
+        bot = make_bot(favs)
+        msg1, rows1 = bot.favorites_now()[0]
+        self.assertEqual(rows1[-1][0][1], "fav_more")               # page 1 -> 더보기
+        self.assertEqual(len([r for r in rows1 if r[0][1].startswith("http")]), 5)
+        # Tap 더보기 -> the remaining 3, numbered 6.. , and no further 더보기.
+        msg2, rows2 = bot.handle_callback(OWNER, "fav_more")
+        self.assertEqual(len([r for r in rows2 if r[0][1].startswith("http")]), 3)
+        self.assertNotIn("fav_more", [r[0][1] for r in rows2])
+        self.assertIn("6)", msg2)                                   # numbering continues
+        # Nothing left to page.
+        reply, _ = bot.handle_callback(OWNER, "fav_more")
+        self.assertIn("더 보여줄", reply)
 
     def test_soonest_first(self):
         favs = [fav(market_id=f"m{i}", token_id=f"t{i}", hours=h)

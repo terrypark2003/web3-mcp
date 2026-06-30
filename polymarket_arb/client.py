@@ -119,14 +119,39 @@ class PolymarketClient:
         resp.raise_for_status()
         return resp.json()
 
-    def order_books(self, token_ids: Iterable[str]) -> dict[str, dict]:
-        """Batch-fetch order books; returns token_id -> raw book.
+    def order_books(
+        self,
+        token_ids: Iterable[str],
+        *,
+        chunk_size: int = 50,
+        max_workers: int = 8,
+    ) -> dict[str, dict]:
+        """Batch-fetch order books concurrently; returns token_id -> raw book.
 
-        Falls back to per-token requests if the batch endpoint is unavailable.
+        Splitting into chunks fetched in parallel is the key speedup: a single
+        giant ``/books`` POST is slow (or gets rejected, dropping us into the
+        per-token fallback — one HTTP call each, minutes-slow for hundreds of
+        tokens). Each chunk tries the batch endpoint and only falls back to
+        per-token for that chunk.
         """
         ids = [str(t) for t in token_ids]
         if not ids:
             return {}
+        chunks = [ids[i:i + chunk_size] for i in range(0, len(ids), chunk_size)]
+        out: dict[str, dict] = {}
+        if len(chunks) == 1:
+            results = [self._fetch_books_chunk(chunks[0])]
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(max_workers, len(chunks))) as pool:
+                results = list(pool.map(self._fetch_books_chunk, chunks))
+        for part in results:
+            out.update(part)
+        return out
+
+    def _fetch_books_chunk(self, ids: list[str]) -> dict[str, dict]:
+        """One chunk: try the batch ``/books`` endpoint, per-token fallback for it."""
         try:
             resp = self.session.post(
                 f"{self.clob_base}/books",
@@ -134,9 +159,8 @@ class PolymarketClient:
                 timeout=self.timeout,
             )
             resp.raise_for_status()
-            books = resp.json()
             out: dict[str, dict] = {}
-            for book in books:
+            for book in resp.json():
                 key = book.get("asset_id") or book.get("token_id")
                 if key is not None:
                     out[str(key)] = book
@@ -145,7 +169,6 @@ class PolymarketClient:
         except requests.RequestException:
             pass
 
-        # Fallback: one request per token.
         out = {}
         for token_id in ids:
             try:
