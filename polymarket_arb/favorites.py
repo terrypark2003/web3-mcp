@@ -170,9 +170,11 @@ def build_favorites_live(
         if any(p is not None and lo <= p <= hi for p in prices):
             candidates.append(market)
 
+    # One-line funnel summary in every run's log makes a silent feed diagnosable
+    # at a glance; the per-market dump is only for deep debugging.
+    print(f"[favorites] markets={len(markets)} within_{max_days}d={len(within)} "
+          f"in_band[{lo:.2f},{hi:.2f}]={len(candidates)}", flush=True)
     if debug:
-        print(f"[favorites] markets={len(markets)} within_{max_days}d={len(within)} "
-              f"in_band[{lo:.2f},{hi:.2f}]={len(candidates)}", flush=True)
         for m in within[:25]:
             d = days_until(m.get("endDate"), now)
             print(f"  near({d:.2f}d): {str(m.get('question',''))[:46]} | "

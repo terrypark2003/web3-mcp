@@ -51,6 +51,5 @@ jobs:
           NOTIFY_FAV_MIN_PRICE: "0.80"  # payout band floor (0.80 -> ~1.25x)
           NOTIFY_FAV_MAX_PRICE: "0.91"  # payout band ceiling (0.91 -> ~1.10x, "$1->$1.1")
           NOTIFY_FAV_MIN_SIZE: "5"      # min shares at the ask (real depth)
-          NOTIFY_FAV_DEBUG: "1"         # TEMP: print funnel counts to diagnose a silent feed
           NOTIFY_DEMO: ${{ (github.event_name == 'workflow_dispatch' && inputs.demo) && '1' || '' }}
         run: python -m polymarket_arb.notify
