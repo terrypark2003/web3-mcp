@@ -8,19 +8,26 @@ there's **no inbound port / domain** — just a process that stays up.
 This repo ships a `Dockerfile` (used by both platforms below), a `Procfile`, and
 a starter `fly.toml`.
 
-> 🌏 **Pick an Allowed region — this decides whether live buys work.**
+> 🌏 **Pick a region the API can trade from — this decides whether live buys work.**
 > Polymarket geo-blocks by the **server's** IP, not yours. Run the bot from a
 > blocked region and live orders fail with
 > `403 Trading restricted in your region` (dry-run still works — it never calls
 > Polymarket). Per the [geoblock list](https://docs.polymarket.com/api-reference/geoblock):
-> - **Blocked** (no trading): **United States** → Railway `US West/East`,
->   Fly.io `iad`/`sjc`/`ord` are all out.
+> - **Blocked** (no trading): United States, Australia, Germany, Netherlands,
+>   France, UK, Italy, Brazil, … → Fly.io `iad`/`sjc`/`ord`/`syd`/`fra`/`ams`/`cdg`/`lhr`/`gru`
+>   and Railway `US`/`EU West (Amsterdam)` are all out.
 > - **Close-only** (can *close* a position but not **open** a $1 buy):
->   **Singapore** → Railway's `Southeast Asia` region won't work for buying.
-> - **Allowed** (opens fine): **Hong Kong** — the closest Allowed region to
->   Korea. Fly.io region code **`hkg`** (already pinned in `fly.toml`). Railway
->   has **no Hong Kong region**, so for *live* trading use **Fly.io** (Option B).
->   Railway is still fine for **dry-run / alerts only**.
+>   Singapore, Poland, Thailand, Taiwan → Railway's `Southeast Asia` and Fly.io
+>   `sin`/`waw` won't work for buying.
+> - **Frontend UI restricted ≠ API blocked**: a few countries (notably **Japan**)
+>   are blocked only on Polymarket's *website*; the **CLOB API is open**. This bot
+>   trades via the API, so these regions work.
+> - **✅ Use Tokyo (`nrt`)**: Japan is frontend-UI-restricted but **API-open**, and
+>   it's the closest live Fly region to Korea. Hong Kong (`hkg`) would also be
+>   fine but Fly **deprecated** it (can't provision new machines). `nrt` is
+>   pinned in `fly.toml`. Railway has no Tokyo/HK region, so for *live* trading
+>   use **Fly.io** (Option B); Railway is fine for **dry-run / alerts only**.
+> - **Fallback**: Mumbai (`bom`, India) is fully allowed if Tokyo ever changes.
 
 > ⚠️ Real money. The bot defaults to **dry-run** (places nothing). Turn live on
 > only after you've watched a dry-run tap. Use a **dedicated wallet funded with
@@ -63,24 +70,28 @@ It's a **worker** — ignore any "no domain/port" notice; that's expected.
 
 ---
 
-## Option B — Fly.io (recommended for live trading — Hong Kong region)
+## Option B — Fly.io (recommended for live trading — Tokyo region)
 
-`fly.toml` already pins **`primary_region = "hkg"`** (Hong Kong — a Polymarket
-**Allowed** region, lowest latency to Korea). That's what makes live buys go
-through instead of 403'ing.
+`fly.toml` already pins **`primary_region = "nrt"`** (Tokyo, Japan). Japan is
+"frontend UI restricted" on Polymarket but the **CLOB API is open**, and this bot
+trades via the API — so live buys go through instead of 403'ing. It's also the
+closest live Fly region to Korea. (Hong Kong `hkg` would also be API-allowed but
+Fly **deprecated** it; Singapore `sin` is Close-only, so it can't open buys.)
 
 ```bash
 # 1. Install flyctl + log in
-curl -L https://fly.io/install.sh | sh
+curl -L https://fly.io/install.sh | sh      # Windows: winget install flyio.flyctl
 fly auth login
 
-# 2. From the repo root. --copy-config keeps the committed fly.toml (so the hkg
+# 2. From the repo root. --copy-config keeps the committed fly.toml (so the nrt
 #    region + worker process stick). Edit `app` to a unique name, or let launch set it.
-fly launch --no-deploy --copy-config      # detects the Dockerfile; say no to DB/Redis
+fly launch --no-deploy --copy-config        # detects the Dockerfile; say no to DB/Redis
 
-# 3. Make sure the machine is actually in Hong Kong (region = the geoblock check)
-fly regions list                          # should show hkg
-fly regions set hkg                       # force it if launch picked elsewhere
+# 3. Make sure the machine is actually in Tokyo (region = the geoblock check)
+fly machine list                            # REGION column should read nrt
+# If launch placed it elsewhere, clone to Tokyo and destroy the wrong one:
+#   fly machine clone <ID> --region nrt
+#   fly machine destroy <ID> --force
 
 # 4. Secrets — dry-run first
 fly secrets set \
@@ -92,17 +103,18 @@ fly secrets set \
 
 # 5. Deploy, then tap a button in Telegram and confirm "NO ORDERS PLACED"
 fly deploy
-fly status                                # confirm the machine's Region is hkg
-fly logs                                  # watch it
+fly status                                  # confirm the machine's Region is nrt
+fly logs                                    # watch it
 
 # 6. Go live (auto-redeploys on secret change) — only the private key is needed;
 #    the L2 API creds derive from it automatically.
 fly secrets set EXECUTION_MODE=live MAX_STAKE_USDC=1 POLYMARKET_PRIVATE_KEY=0x...
 ```
 
-Keep it to one always-on machine **in Hong Kong**: `fly scale count 1 --region hkg`.
+Keep it to one always-on machine **in Tokyo**: `fly scale count 1 --region nrt`.
 If a live tap still returns `403 Trading restricted`, run `fly status` — the
-machine's Region must read `hkg`, not a US region.
+machine's Region must read `nrt`. (If Tokyo ever stops working, fall back to
+Mumbai `bom` — India is fully allowed: `fly machine clone <ID> --region bom`.)
 
 ---
 
