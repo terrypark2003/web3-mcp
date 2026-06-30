@@ -167,17 +167,16 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(on_callback))
 
     # Only the favorites feed is proactive now (other scan pushes removed per
-    # request). /scan, /cross, /ev still work on demand.
-    fav_interval = float(os.environ.get("FAV_INTERVAL_SEC", "900") or "900")
+    # request). /scan, /cross, /ev still work on demand. Default: once a day.
+    fav_interval = float(os.environ.get("FAV_INTERVAL_SEC", "86400") or "86400")
 
     async def favorites_job(context):  # pragma: no cover - requires Telegram + network
         try:
-            result = bot.poll_favorites()
+            chunks = bot.poll_favorites()
         except Exception as exc:  # noqa: BLE001 - a scan failure shouldn't kill the job
             print(f"favorites poll failed: {exc}")
             return
-        if result:
-            message, rows = result
+        for message, rows in chunks:  # one message per 5-item group
             await context.bot.send_message(
                 chat_id=bot.owner_id, text=message, reply_markup=_keyboard(rows),
             )
