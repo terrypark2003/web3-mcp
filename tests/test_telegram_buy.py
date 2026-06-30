@@ -165,6 +165,40 @@ class TestBalance(unittest.TestCase):
                 ex.usdc_balance()
         self.assertIn("POLYGON_RPC_URL", str(ctx.exception))     # actionable hint
 
+    def test_balance_reads_configured_collateral_token(self):
+        # CLOB V2 holds funds in pUSD (a different ERC-20). Setting
+        # POLYMARKET_COLLATERAL_TOKEN must make /balance read that token too,
+        # otherwise it reports $0 even though the site shows cash.
+        import requests
+        from unittest import mock
+
+        PUSD = "0xabcabcabcabcabcabcabcabcabcabcabcabcabca"
+        cfg = ExecutionConfig.from_env({"POLYMARKET_COLLATERAL_TOKEN": PUSD})
+        self.assertEqual(cfg.collateral_token, PUSD)
+        cfg.funder = "0xC16CBCC9590952d72a1ff3e59854871ca9b0CB32"
+        ex = PolymarketExecutor(cfg)
+
+        queried = []
+
+        class FakeResp:
+            def __init__(self, result):
+                self._result = result
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"result": self._result}
+
+        def fake_post(url, **kwargs):
+            to = kwargs["json"]["params"][0]["to"]
+            queried.append(to)
+            return FakeResp(hex(6_500_000) if to == PUSD else "0x0")
+
+        with mock.patch("requests.post", side_effect=fake_post):
+            self.assertAlmostEqual(ex.usdc_balance(), 6.5)   # pUSD balance counted
+        self.assertIn(PUSD, queried)                          # the pUSD token was read
+
 
 class TestBuyCallback(unittest.TestCase):
     def test_unauthorized(self):
