@@ -324,6 +324,28 @@ class PolymarketExecutor:
                 filled_legs=filled,
             )
 
+    def usdc_balance(self) -> float:
+        """Tradeable USDC (collateral) balance from the CLOB. Needs the signing key.
+
+        Read-only, so it works regardless of EXECUTION_MODE as long as
+        ``POLYMARKET_PRIVATE_KEY`` is set (L2 creds are derived if absent).
+        UNRUN here (no key/network) — validate against your client version.
+        """
+        client = self._client_or_raise()
+        try:  # pragma: no cover - requires py-clob-client + network
+            from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+            params = BalanceAllowanceParams(
+                asset_type=AssetType.COLLATERAL,
+                signature_type=self.config.signature_type or 0,
+            )
+            resp = client.get_balance_allowance(params)
+        except ImportError as exc:  # pragma: no cover
+            raise ExecutionError(
+                "py-clob-client not installed (pip install -r requirements-bot.txt)"
+            ) from exc
+        return _parse_usdc_balance(resp)
+
     def _unwind(self, filled_outcomes: list[str], plan: OrderPlan) -> str:  # pragma: no cover
         """Best-effort flatten of legs that filled before an abort."""
         if not filled_outcomes:
@@ -332,6 +354,20 @@ class PolymarketExecutor:
             f"attempted to sell {filled_outcomes} at market — verify manually; "
             "unwind may have slipped"
         )
+
+
+def _parse_usdc_balance(resp) -> float:
+    """USDC from a CLOB get_balance_allowance response.
+
+    The CLOB returns the collateral ``balance`` as a string of base units (USDC
+    has 6 decimals), e.g. "1500000" -> $1.50. A value that already contains a
+    decimal point is treated as human USDC as-is.
+    """
+    raw = resp.get("balance") if isinstance(resp, dict) else resp
+    if raw is None:
+        raise ExecutionError("balance missing from CLOB response")
+    s = str(raw).strip()
+    return float(s) if "." in s else int(s) / 1_000_000
 
 
 def _order_succeeded(resp) -> bool:  # pragma: no cover - shape depends on client version
