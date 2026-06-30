@@ -392,9 +392,9 @@ class ArbBot:
         return line
 
     def _balance(self) -> str:
-        if not self.exec_config.private_key:
-            return ("잔고를 조회하려면 POLYMARKET_PRIVATE_KEY 가 필요합니다 "
-                    "(Railway 변수에 설정).")
+        if not self.exec_config.funder:
+            return ("잔고를 조회하려면 POLYMARKET_FUNDER(폴리마켓 입금 주소)가 "
+                    "필요합니다 (Railway 변수에 설정).")
         try:
             bal = self.executor.usdc_balance()
         except ExecutionError as exc:
