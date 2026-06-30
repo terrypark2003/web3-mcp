@@ -118,12 +118,20 @@ def build_bot() -> ArbBot:
 
 
 def _keyboard(rows):  # pragma: no cover - thin telegram adapter
-    """Turn ``[[(label, callback_data), ...], ...]`` into an InlineKeyboardMarkup."""
+    """Turn ``[[(label, value), ...], ...]`` into an InlineKeyboardMarkup.
+
+    A value starting with ``http`` becomes a URL button (opens the link — e.g. a
+    Polymarket market to buy manually); anything else is a callback button.
+    """
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+    def button(label, value):
+        if value.startswith("http://") or value.startswith("https://"):
+            return InlineKeyboardButton(label, url=value)
+        return InlineKeyboardButton(label, callback_data=value)
+
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(label, callback_data=data) for label, data in row]
-        for row in rows
+        [button(label, value) for label, value in row] for row in rows
     ])
 
 
