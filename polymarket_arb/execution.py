@@ -170,7 +170,7 @@ class ExecutionConfig:
     private_key: Optional[str] = None
     funder: Optional[str] = None
     signature_type: Optional[int] = None  # 0=EOA, 1=email/Magic proxy, 2=browser-wallet proxy
-    rpc_url: str = "https://polygon-rpc.com"
+    rpc_url: Optional[str] = None  # POLYGON_RPC_URL override; falls back to public list
     clob_host: str = "https://clob.polymarket.com"
 
     @classmethod
@@ -192,7 +192,7 @@ class ExecutionConfig:
                 int(env["POLYMARKET_SIGNATURE_TYPE"])
                 if env.get("POLYMARKET_SIGNATURE_TYPE") else None
             ),
-            rpc_url=env.get("POLYGON_RPC_URL") or "https://polygon-rpc.com",
+            rpc_url=env.get("POLYGON_RPC_URL") or None,
         )
 
     def live_ready(self) -> tuple[bool, list[str]]:
@@ -337,25 +337,44 @@ class PolymarketExecutor:
             raise ExecutionError("POLYMARKET_FUNDER (Polymarket deposit address) is required")
         import requests  # local import: only needed for the live balance read
 
-        total = 0.0
-        for token in (_USDC_E, _USDC_NATIVE):
+        # Public RPCs go down / start returning 401 / rate-limit without warning,
+        # so try a list. A user-pinned POLYGON_RPC_URL is tried first; the keyless
+        # public endpoints below are the fallback. The first endpoint that answers
+        # both token reads wins.
+        endpoints: list[str] = []
+        if self.config.rpc_url:
+            endpoints.append(self.config.rpc_url)
+        endpoints += [u for u in _POLYGON_RPCS if u not in endpoints]
+
+        last_error = "no endpoints"
+        for url in endpoints:
             try:
-                resp = requests.post(
-                    self.config.rpc_url,
-                    json={
-                        "jsonrpc": "2.0", "id": 1, "method": "eth_call",
-                        "params": [
-                            {"to": token, "data": _erc20_balanceof_data(addr)},
-                            "latest",
-                        ],
-                    },
-                    timeout=20,
-                )
-                resp.raise_for_status()
-                total += _hex_to_usdc(resp.json().get("result"))
-            except requests.RequestException as exc:
-                raise ExecutionError(f"Polygon RPC error: {exc}") from exc
-        return total
+                total = 0.0
+                for token in (_USDC_E, _USDC_NATIVE):
+                    resp = requests.post(
+                        url,
+                        json={
+                            "jsonrpc": "2.0", "id": 1, "method": "eth_call",
+                            "params": [
+                                {"to": token, "data": _erc20_balanceof_data(addr)},
+                                "latest",
+                            ],
+                        },
+                        timeout=20,
+                    )
+                    resp.raise_for_status()
+                    payload = resp.json()
+                    if payload.get("error"):  # JSON-RPC error in a 200 body
+                        raise ExecutionError(str(payload["error"]))
+                    total += _hex_to_usdc(payload.get("result"))
+                return total
+            except (requests.RequestException, ExecutionError, ValueError) as exc:
+                last_error = f"{url}: {exc}"
+                continue
+        raise ExecutionError(
+            f"all Polygon RPCs failed (last: {last_error}). "
+            "Set POLYGON_RPC_URL to a working endpoint."
+        )
 
     def _unwind(self, filled_outcomes: list[str], plan: OrderPlan) -> str:  # pragma: no cover
         """Best-effort flatten of legs that filled before an abort."""
@@ -371,6 +390,17 @@ class PolymarketExecutor:
 # summed too so the balance matches the site's "Cash" whichever variant holds it.
 _USDC_E = "0x2791bca1f2de4661ed88a30c99a7a9449aa84174"
 _USDC_NATIVE = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359"
+
+# Keyless public Polygon JSON-RPC endpoints, tried in order. polygon-rpc.com
+# started returning 401, so PublicNode/LlamaRPC/dRPC lead. Override with
+# POLYGON_RPC_URL (e.g. an Alchemy/Infura URL) for a dedicated, rate-limit-free one.
+_POLYGON_RPCS = (
+    "https://polygon-bor-rpc.publicnode.com",
+    "https://polygon.llamarpc.com",
+    "https://polygon.drpc.org",
+    "https://1rpc.io/matic",
+    "https://polygon-rpc.com",
+)
 
 
 def _erc20_balanceof_data(address: str) -> str:
