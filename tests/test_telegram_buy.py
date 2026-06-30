@@ -88,6 +88,31 @@ class TestFavoritesNow(unittest.TestCase):
         self.assertTrue(bot.favorites_now())  # on-demand: lists again, not deduped
 
 
+class TestBalance(unittest.TestCase):
+    def test_parse_base_units(self):
+        from polymarket_arb.execution import _parse_usdc_balance
+        self.assertAlmostEqual(_parse_usdc_balance({"balance": "1500000"}), 1.5)
+
+    def test_parse_decimal_passthrough(self):
+        from polymarket_arb.execution import _parse_usdc_balance
+        self.assertAlmostEqual(_parse_usdc_balance({"balance": "12.34"}), 12.34)
+
+    def test_parse_missing_raises(self):
+        from polymarket_arb.execution import _parse_usdc_balance
+        with self.assertRaises(ExecutionError):
+            _parse_usdc_balance({})
+
+    def test_balance_command_without_key(self):
+        bot = make_bot([])  # dry-run, no POLYMARKET_PRIVATE_KEY
+        self.assertIn("POLYMARKET_PRIVATE_KEY", bot.handle(OWNER, "/balance"))
+
+    def test_balance_command_success(self):
+        bot = make_bot([])
+        bot.exec_config.private_key = "0xabc"          # pretend a key is set
+        bot.executor.usdc_balance = lambda: 42.5       # stub the network call
+        self.assertIn("$42.50", bot.handle(OWNER, "/balance"))
+
+
 class TestBuyCallback(unittest.TestCase):
     def test_unauthorized(self):
         bot = make_bot([fav()])

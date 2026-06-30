@@ -16,6 +16,7 @@ from .detect import FeeModel
 from .ev import EVOpportunity
 from .execution import (
     ExecutionConfig,
+    ExecutionError,
     OrderPlan,
     PolymarketExecutor,
     build_order_plan,
@@ -34,6 +35,7 @@ HELP = (
     "\n"
     "명령어:\n"
     "/fav - 지금 유력후보 보기 (남은시간 구간별 + 매수버튼)\n"
+    "/balance - 내 폴리마켓 USDC 잔고 확인\n"
     "/status - 모드·최대 금액·실거래 준비 상태\n"
     "/scan - 폴리마켓 컴플리트셋 차익 찾기\n"
     "/cross - 거래소 간 차익 (Kalshi vs 폴리마켓)\n"
@@ -149,6 +151,8 @@ class ArbBot:
             return HELP
         if cmd == "/status":
             return self._status()
+        if cmd in ("/balance", "/bal"):
+            return self._balance()
         if cmd == "/scan":
             return self._scan()
         if cmd == "/cross":
@@ -391,6 +395,18 @@ class ArbBot:
         elif mode != "live":
             line += "\nDry-run: /confirm will simulate only, never place orders."
         return line
+
+    def _balance(self) -> str:
+        if not self.exec_config.private_key:
+            return ("잔고를 조회하려면 POLYMARKET_PRIVATE_KEY 가 필요합니다 "
+                    "(Railway 변수에 설정).")
+        try:
+            bal = self.executor.usdc_balance()
+        except ExecutionError as exc:
+            return f"잔고 조회 불가: {exc}"
+        except Exception as exc:  # noqa: BLE001 - surface API/network errors to chat
+            return f"잔고 조회 오류: {exc}"
+        return f"💰 폴리마켓 USDC 잔고: ${bal:,.2f}"
 
     def _find(self, market_id: str) -> Optional[Opportunity]:
         for op in self.scan_fn():
