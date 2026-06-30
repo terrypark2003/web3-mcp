@@ -4,6 +4,10 @@
 # platform (NOT in the image): see DEPLOY.md.
 FROM python:3.12-slim
 
+# Flush stdout/stderr immediately so platform logs show "Bot up…" / errors in
+# real time (otherwise Python block-buffers in a container and logs look empty).
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 # Base (requests) + bot/live-execution deps (python-telegram-bot[job-queue], py-clob-client).

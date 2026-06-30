@@ -13,6 +13,7 @@ lives in bot_core.py.
 
 from __future__ import annotations
 
+import logging
 import os
 
 from .bot_core import ArbBot
@@ -136,6 +137,13 @@ def main() -> None:
         raise SystemExit(
             "python-telegram-bot not installed (pip install -r requirements-bot.txt)"
         ) from exc
+
+    # Surface python-telegram-bot's own logs (connection/auth errors, e.g. a bad
+    # token shows up as "Unauthorized") so a silent bot is diagnosable.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
