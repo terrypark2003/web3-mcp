@@ -207,7 +207,7 @@ and stays on-demand via `/ev`. Set `FAIR_VALUES_FILE` to enable `/ev` live.
 - **Partial-fill risk is real.** Two CLOB orders can't fill atomically; the
   executor places each leg fill-or-kill and tries to unwind if one fails — an
   unwind can slip. Watch your first live fills by hand.
-- **Live placement is UNTESTED from here.** The `py-clob-client` calls are
+- **Live placement is UNTESTED from here.** The `polymarket-client` calls are
   written to the documented interface but could not be run against the live API
   in this environment. **Validate against your installed client version and a
   $1 trade before trusting larger size.** `signature_type`/`funder` depend on
@@ -245,7 +245,7 @@ dry-run preview → you Confirm. In live mode the modal turns red and says
   credentials *and* a per-trade confirm, exactly like the bot. Start at
   `MAX_STAKE_USDC=1`.
 - **Same execution caveats** as the bot apply (only `BUY_SET`, non-atomic
-  fills, `py-clob-client` calls unrun from this repo — validate with $1 first).
+  fills, `polymarket-client` calls unrun from this repo — validate with $1 first).
 
 The dashboard logic lives in `web_core.py` (pure, unit-tested); `webapp.py` is
 just the HTTP/auth wiring and is best validated by running it locally.
@@ -340,7 +340,7 @@ Bounds on every order: the **$1 cap** (`FAV_BUY_USD`) and the price band
 cron is one-way and can't take a tap; the buy buttons need the interactive bot
 running on a machine with your Polymarket wallet key + USDC. As with all live
 trading here, **dry-run first** and watch the first fills by hand — the
-`py-clob-client` order path is written to the documented interface but is not
+`polymarket-client` order path is written to the documented interface but is not
 exercised by the test suite. Reuse the existing `EXECUTION_MODE` / credential
 setup in **Telegram bot & execution** above.
 
@@ -412,7 +412,7 @@ polymarket_arb/
   matching.py        Curated cross-venue pair registry (no network)
   multivenue.py      Live cross-venue + EV orchestration
   portfolio.py       Bankroll allocation + fractional-Kelly sizing (no network)
-  execution.py       Order-plan building + py-clob-client executor (live = opt-in)
+  execution.py       Order-plan building + polymarket-client executor (live = opt-in)
   bot_core.py        Telegram command logic + alerts + broadcaster (pure, testable)
   telegram_bot.py    Thin async Telegram shell (run on your machine)
   notify.py          One-shot Telegram notifier for cron/CI (pure dedup + send)

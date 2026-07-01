@@ -93,6 +93,19 @@ class TestExecutionConfig(unittest.TestCase):
         cfg = ExecutionConfig.from_env({"POLYMARKET_PRIVATE_KEY": "0xabc"})
         self.assertIsNone(cfg.signature_type)
 
+    def test_relayer_key_parsed_from_env(self):
+        cfg = ExecutionConfig.from_env({
+            "POLYMARKET_RELAYER_API_KEY": "rk-123",
+            "POLYMARKET_RELAYER_ADDRESS": "0xrelayer",
+        })
+        self.assertEqual(cfg.relayer_api_key, "rk-123")
+        self.assertEqual(cfg.relayer_address, "0xrelayer")
+
+    def test_relayer_key_absent_is_none(self):
+        cfg = ExecutionConfig.from_env({})
+        self.assertIsNone(cfg.relayer_api_key)
+        self.assertIsNone(cfg.relayer_address)
+
     def test_live_ready_true_with_all_creds(self):
         cfg = ExecutionConfig.from_env({
             "EXECUTION_MODE": "live",
@@ -126,6 +139,62 @@ class TestExecutorSafety(unittest.TestCase):
         text = simulate(plan, cfg)
         self.assertIn("드라이런", text)
         self.assertIn("주문 안 함", text)
+
+
+class _StubClient:
+    """Stands in for polymarket-client's SecureClient (place_limit_order only)."""
+
+    def __init__(self, resp):
+        self.resp = resp
+        self.calls = []
+
+    def place_limit_order(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.resp
+
+
+class _Accepted:
+    ok = True
+    order_id = "0xorder"
+    status = "matched"
+
+
+class _Rejected:
+    ok = False
+    code = "not_enough_balance"
+    message = "not enough balance / allowance"
+
+
+class TestLiveExecuteWithStubClient(unittest.TestCase):
+    """The live path is now stub-testable: execute() only calls place_limit_order
+    and branches on resp.ok — no SDK imports inside the loop."""
+
+    def _executor(self, resp):
+        cfg = ExecutionConfig.from_env({
+            "EXECUTION_MODE": "live", "POLYMARKET_PRIVATE_KEY": "0xabc",
+        })
+        ex = PolymarketExecutor(cfg)
+        ex._client = _StubClient(resp)   # bypass network client construction
+        return ex
+
+    def test_accepted_marks_placed_and_sends_buy_legs(self):
+        plan = build_order_plan(buy_set_op(), max_stake=1.0)
+        ex = self._executor(_Accepted())
+        result = ex.execute(plan)
+        self.assertTrue(result.placed)
+        self.assertEqual(len(ex._client.calls), len(plan.legs))
+        for call in ex._client.calls:
+            self.assertEqual(call["side"], "BUY")
+            self.assertIn("token_id", call)
+            self.assertGreater(call["size"], 0)
+
+    def test_rejected_reports_code_and_does_not_continue(self):
+        plan = build_order_plan(buy_set_op(), max_stake=1.0)
+        ex = self._executor(_Rejected())
+        result = ex.execute(plan)
+        self.assertFalse(result.placed)
+        self.assertIn("not_enough_balance", result.detail)   # actionable error code
+        self.assertEqual(len(ex._client.calls), 1)           # stopped at first reject
 
 
 if __name__ == "__main__":

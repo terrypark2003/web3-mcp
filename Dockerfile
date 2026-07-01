@@ -6,7 +6,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Base (requests) + bot/live-execution deps (python-telegram-bot[job-queue], py-clob-client).
+# Base (requests) + bot/live-execution deps (python-telegram-bot[job-queue], polymarket-client).
 COPY requirements.txt requirements-bot.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-bot.txt
 

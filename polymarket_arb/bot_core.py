@@ -30,11 +30,11 @@ from .settlements import check_settlements, format_settlement_message
 
 HELP = (
     "예측시장 봇 (소유자 전용)\n"
-    "🔗 /fav1 /fav3 /fav6 /fav9 /fav12 — 해당 시간 내 정산되는 "
+    "💵 /fav1 /fav3 /fav6 /fav9 /fav12 — 해당 시간 내 정산되는 "
     "$1→약 $1.05~$1.15 '유력후보' 5개를 임박 순으로 보여줍니다. "
-    "각 항목의 [🔗 폴리마켓에서 매수] 버튼을 누르면 그 마켓이 열려요 — "
-    "거기서 직접 매수하세요 (V2 이후 API 자동매수는 폴리마켓이 막아둠). "
-    "[➕ 더보기]로 다음 5개씩 넘겨봅니다.\n"
+    "번호 버튼 [💵 $1 매수]는 확인 후 자동 매수(기본 dry-run, "
+    "EXECUTION_MODE=live일 때 실제 체결 — 이메일 계정도 공식 SDK로 지원), "
+    "[🔗 열기]는 그 마켓을 폴리마켓에서 엽니다. [➕ 더보기]로 다음 5개씩.\n"
     "\n"
     "명령어:\n"
     "/fav1 - 1시간 내 정산 유력후보 (가장 임박)\n"
@@ -214,16 +214,11 @@ class ArbBot:
 
         Scans once, caches the full sorted list, and returns ``[(message, rows)]``
         for the first ``limit`` items. A "더보기" button pages through the rest via
-        ``handle_callback("fav_more")`` — no re-scan. Each item has a numbered link
-        button that opens the market on Polymarket to buy manually. NOT deduped.
-        Empty list if none qualify.
-
-        NOTE: the button opens the market instead of auto-buying. Polymarket's
-        CLOB V2 (2026-04-28) requires the "deposit wallet flow" and rejects
-        programmatic orders from email/Magic and plain-EOA makers alike
-        ("maker address not allowed"), so API auto-execution is unavailable. The
-        buy engine (build_single_buy_plan / handle_callback) is kept for if/when
-        that's fixed; the link is the working path today.
+        ``handle_callback("fav_more")`` — no re-scan. Each item gets TWO buttons:
+        a numbered [$1 매수] callback (two-step confirm, dry-run unless
+        EXECUTION_MODE=live — works for deposit-wallet/email accounts via the
+        unified polymarket-client SDK) and a [🔗] link that opens the market on
+        Polymarket for manual buying. NOT deduped. Empty list if none qualify.
         """
         if self.fav_scan_fn is None:
             return []
@@ -248,13 +243,14 @@ class ArbBot:
         chunk = items[off:off + limit]
         total = len(items)
         lines = [
-            f"🔗 {page['hours']:g}시간 내 유력후보 {off + 1}–{off + len(chunk)}/{total} "
-            f"(무위험 아님 — 버튼=폴리마켓에서 직접 매수):"
+            f"💵 {page['hours']:g}시간 내 유력후보 {off + 1}–{off + len(chunk)}/{total} "
+            f"(무위험 아님 — 번호 버튼=$1 매수(확인 필요), 🔗=폴리마켓에서 열기):"
         ]
         rows = []
         for i, (hours, f) in enumerate(chunk, start=off + 1):
             self._fav_counter += 1
-            self._fav_offered[f"f:{self._fav_counter}"] = f  # kept for disabled auto-buy
+            ref = f"f:{self._fav_counter}"
+            self._fav_offered[ref] = f
             payout = (1.0 / f.price) if f.price else 0.0
             cents = f.price * 100
             lines.append(
@@ -262,9 +258,10 @@ class ArbBot:
                 f"($1→약 ${payout:.2f}, ⏳ {hours:.1f}시간 남음)"
             )
             market_url = f.url or "https://polymarket.com/markets"
-            rows.append([(
-                f"{i}) 🔗 폴리마켓에서 매수 — {f.outcome[:10]} {cents:.0f}¢", market_url,
-            )])
+            rows.append([
+                (f"{i}) 💵 $1 매수 — {f.outcome[:10]} {cents:.0f}¢", ref),
+                ("🔗 열기", market_url),
+            ])
         lines.append("⚠️ 무위험 아님: 적중 시 소액 이익, 빗나가면 전액 손실.")
         page["offset"] = off + len(chunk)
         if page["offset"] < total:
