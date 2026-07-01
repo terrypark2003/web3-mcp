@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import os
 
+from . import settlements
 from .bot_core import ArbBot
 from .detect import FeeModel
 from .execution import ExecutionConfig, PolymarketExecutor
@@ -220,8 +221,27 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT, on_message))
     app.add_handler(CallbackQueryHandler(on_callback))
 
-    # On-demand only: favorites are shown when the owner sends /fav (no proactive
-    # crawling/pushing). /scan, /cross, /ev also work on demand.
+    # Everything else (favorites, /scan, /cross, /ev) is on-demand only. The one
+    # proactive push is settlement results — that's the point of watching a
+    # position, so it can't wait for the owner to ask.
+    state_path = os.environ.get("SETTLEMENT_STATE_FILE", "settlement_state.json")
+    interval = int(os.environ.get("SETTLEMENT_CHECK_INTERVAL_SEC", "300") or "300")
+    if bot.exec_config.funder and app.job_queue is not None:
+        bot._settlement_state = settlements.load_state(state_path)
+
+        async def _check_settlements(context):  # pragma: no cover - Telegram + network
+            try:
+                messages = await asyncio.to_thread(bot.check_settlements_now)
+            except Exception as exc:  # noqa: BLE001 - log, don't crash the job loop
+                print(f"[settlements] check failed: {exc}", flush=True)
+                return
+            settlements.save_state(bot._settlement_state, state_path)
+            for msg in messages:
+                await app.bot.send_message(chat_id=bot.owner_id, text=msg)
+
+        app.job_queue.run_repeating(_check_settlements, interval=interval, first=interval)
+        print(f"[settlements] watching positions every {interval}s.", flush=True)
+
     print(f"Bot up. mode={bot.exec_config.mode}. Waiting for owner {bot.owner_id}.")
     app.run_polling()
 

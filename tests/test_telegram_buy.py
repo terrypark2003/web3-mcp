@@ -280,6 +280,29 @@ class TestPortfolio(unittest.TestCase):
         self.assertEqual(pf["positions"][0]["title"], "A")  # sorted by value desc
 
 
+class TestSettlementWatcher(unittest.TestCase):
+    def test_noop_without_funder(self):
+        bot = make_bot([])  # no funder configured
+        self.assertEqual(bot.check_settlements_now(), [])
+
+    def test_reports_win_across_polls(self):
+        bot = make_bot([])
+        bot.exec_config.funder = "0xC16CBCC9590952d72a1ff3e59854871ca9b0CB32"
+        row_open = {"conditionId": "c1", "outcome": "Yes", "curPrice": 0.6,
+                    "currentValue": 10.0, "cashPnl": 0.0, "redeemable": False,
+                    "title": "Will it rain?"}
+        row_won = {**row_open, "curPrice": 1.0, "redeemable": True,
+                   "currentValue": 20.0, "cashPnl": 8.0}
+        bot.executor.raw_positions = lambda: [row_open]
+        self.assertEqual(bot.check_settlements_now(), [])   # just tracked as open
+        bot.executor.raw_positions = lambda: [row_won]
+        msgs = bot.check_settlements_now()
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("적중", msgs[0])
+        # State persists on the bot -> polling again with the same row doesn't refire.
+        self.assertEqual(bot.check_settlements_now(), [])
+
+
 class TestBuyCallback(unittest.TestCase):
     def test_unauthorized(self):
         bot = make_bot([fav()])

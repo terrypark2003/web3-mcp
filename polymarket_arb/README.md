@@ -173,7 +173,15 @@ python -m polymarket_arb.telegram_bot
 
 Commands (owner-only — the bot ignores every chat except `TELEGRAM_OWNER_ID`):
 `/scan`, `/cross`, `/ev`, `/allocate <bankroll>`, `/plan <id>`, `/execute <id>`
-then `/confirm`, `/cancel`, `/alerts <on|off|status>`, `/status`.
+then `/confirm`, `/cancel`, `/alerts <on|off|status>`, `/status`,
+`/fav1`/`/fav3`/`/fav6`/`/fav9`/`/fav12` (near-resolution favorites, paged with
+`[➕ 더보기]`), `/balance` (cash), `/portfolio` (total worth + open positions).
+
+**Settlement watcher.** If `POLYMARKET_FUNDER` is set, the bot polls your open
+positions every `SETTLEMENT_CHECK_INTERVAL_SEC` and proactively pushes a
+message the moment one resolves — win or lose (see `polymarket_arb/settlements.py`
+for how a resolution is detected). State persists to `SETTLEMENT_STATE_FILE` so
+restarts don't re-notify about the same result.
 
 **Proactive alerts.** The bot polls every `ALERT_INTERVAL_SEC` and pushes a
 message when a *new* arbitrage appears (deduped; a vanished-then-reappeared

@@ -391,6 +391,27 @@ class PolymarketExecutor:
             "Set POLYGON_RPC_URL to a working endpoint."
         )
 
+    def raw_positions(self) -> list[dict]:
+        """Raw position rows from Polymarket's public Data API (no auth).
+
+        Shared by ``portfolio()`` and the settlement watcher — the latter needs
+        fields (``conditionId``, ``asset``, ``endDate``) that ``portfolio()``'s
+        summarized view drops.
+        """
+        addr = self.config.funder
+        if not addr:
+            raise ExecutionError("POLYMARKET_FUNDER (Polymarket deposit address) is required")
+        import requests  # local import: only needed for the live read
+
+        try:
+            resp = requests.get(
+                f"{_DATA_API}/positions", params={"user": addr}, timeout=20,
+            )
+            resp.raise_for_status()
+            return resp.json() or []
+        except requests.RequestException as exc:
+            raise ExecutionError(f"Polymarket data API error: {exc}") from exc
+
     def portfolio(self) -> dict:
         """Total portfolio worth: cash (pUSD/USDC) + open positions' current value.
 
@@ -399,25 +420,12 @@ class PolymarketExecutor:
         best-effort — if the RPC is down the positions are still returned (with
         ``cash=None``) instead of failing the whole command.
         """
-        addr = self.config.funder
-        if not addr:
-            raise ExecutionError("POLYMARKET_FUNDER (Polymarket deposit address) is required")
-        import requests  # local import: only needed for the live read
-
         try:
             cash = self.usdc_balance()
         except ExecutionError:
             cash = None
 
-        try:
-            resp = requests.get(
-                f"{_DATA_API}/positions", params={"user": addr}, timeout=20,
-            )
-            resp.raise_for_status()
-            raw = resp.json() or []
-        except requests.RequestException as exc:
-            raise ExecutionError(f"Polymarket data API error: {exc}") from exc
-
+        raw = self.raw_positions()
         positions, pos_value, pnl = [], 0.0, 0.0
         for p in raw:
             val = _num(p.get("currentValue"))
