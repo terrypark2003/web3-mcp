@@ -26,6 +26,7 @@ from .execution import (
 from .models import ARB_BUY_SET, Opportunity
 from .portfolio import SizingConfig, allocate_portfolio, format_portfolio
 from .scanner import cross_to_dict, ev_to_dict, opportunity_to_dict
+from .settlements import check_settlements, format_settlement_message
 
 HELP = (
     "예측시장 봇 (소유자 전용)\n"
@@ -40,6 +41,7 @@ HELP = (
     "/fav3 - 3시간 내 / /fav6 - 6시간 내 / /fav9 - 9시간 내 / /fav12 - 12시간 내\n"
     "/balance - 내 폴리마켓 현금(pUSD) 잔고 확인\n"
     "/portfolio - 총 자산(현금 + 포지션 평가액) + 미실현 손익\n"
+    "🔔 보유 포지션이 정산되면(적중/낙첨) 자동으로 알려드려요 (POLYMARKET_FUNDER 설정 시).\n"
     "/status - 모드·최대 금액·실거래 준비 상태\n"
     "/scan - 폴리마켓 컴플리트셋 차익 찾기\n"
     "/cross - 거래소 간 차익 (Kalshi vs 폴리마켓)\n"
@@ -139,6 +141,7 @@ class ArbBot:
         self._fav_offered: dict[str, object] = {}  # short id -> FavoriteBet
         self._fav_counter: int = 0
         self._fav_page: dict | None = None  # last /fav scan, paged via "더보기"
+        self._settlement_state: dict = {}  # see settlements.check_settlements
 
     def is_authorized(self, chat_id: int) -> bool:
         return chat_id == self.owner_id
@@ -469,6 +472,19 @@ class ArbBot:
         if not pf["positions"]:
             lines.append("(보유 포지션 없음)")
         return "\n".join(lines)
+
+    def check_settlements_now(self) -> list[str]:
+        """Poll positions and return messages for newly-resolved ones (may be []).
+
+        Stateful across calls via ``self._settlement_state`` (persist it to
+        survive restarts — see ``settlements.load_state``/``save_state``).
+        Silent no-op (returns []) if ``POLYMARKET_FUNDER`` isn't configured.
+        """
+        if not self.exec_config.funder:
+            return []
+        raw = self.executor.raw_positions()  # ExecutionError propagates to caller
+        events, self._settlement_state = check_settlements(raw, self._settlement_state)
+        return [format_settlement_message(e) for e in events]
 
     def _find(self, market_id: str) -> Optional[Opportunity]:
         for op in self.scan_fn():
