@@ -9,7 +9,8 @@ Usage:
     POLYMARKET_PRIVATE_KEY=0x... python scripts/make_creds.py
 
 The private key is read from the environment and is never printed. Needs network
-access to clob.polymarket.com and ``pip install py-clob-client-v2`` (CLOB V2).
+access to clob.polymarket.com and ``pip install polymarket-client`` (the
+official unified SDK; see requirements-bot.txt).
 """
 
 import os
@@ -22,21 +23,21 @@ def main() -> int:
         print("Set POLYMARKET_PRIVATE_KEY in the environment first.", file=sys.stderr)
         return 1
     try:
-        from py_clob_client_v2.client import ClobClient
+        from polymarket import SecureClient
     except ImportError:
-        print("pip install py-clob-client-v2", file=sys.stderr)
+        print("pip install polymarket-client", file=sys.stderr)
         return 1
 
-    host = os.environ.get("CLOB_HOST", "https://clob.polymarket.com")
     funder = os.environ.get("POLYMARKET_FUNDER") or None
-    client = ClobClient(host=host, key=key, chain_id=137, funder=funder)
-    creds = client.create_or_derive_api_key()  # one network call
+    # create() derives (or creates) the L2 creds from the key — one network call.
+    client = SecureClient.create(private_key=key, wallet=funder)
+    creds = client.credentials
 
     print("# Paste these into your platform's variables (optional — the bot also")
     print("# derives them automatically from POLYMARKET_PRIVATE_KEY):")
-    print(f"POLYMARKET_API_KEY={creds.api_key}")
-    print(f"POLYMARKET_API_SECRET={creds.api_secret}")
-    print(f"POLYMARKET_API_PASSPHRASE={creds.api_passphrase}")
+    print(f"POLYMARKET_API_KEY={creds.key}")
+    print(f"POLYMARKET_API_SECRET={creds.secret}")
+    print(f"POLYMARKET_API_PASSPHRASE={creds.passphrase}")
     return 0
 
 

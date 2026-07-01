@@ -32,7 +32,7 @@ a starter `fly.toml`.
 > ⚠️ Real money. The bot defaults to **dry-run** (places nothing). Turn live on
 > only after you've watched a dry-run tap. Use a **dedicated wallet funded with
 > only what you intend to trade**. Never commit secrets — set them in the
-> platform's secrets/variables UI. The live order path (`py-clob-client`) is
+> platform's secrets/variables UI. The live order path (`polymarket-client`) is
 > written to its documented interface but is not exercised by the test suite, so
 > watch your first live fill by hand.
 
@@ -128,17 +128,24 @@ USDC on Polygon):
 | `EXECUTION_MODE` | `live` | yes |
 | `MAX_STAKE_USDC` | `1` (per-trade cap) | recommended |
 | `POLYMARKET_PRIVATE_KEY` | signing wallet key — **dedicated wallet, small funds** | **yes** |
-| `POLYMARKET_FUNDER` | proxy/funder address (only if you use a Polymarket proxy wallet) | if proxy |
-| `POLYMARKET_SIGNATURE_TYPE` | `0` EOA / `1` email-Magic proxy / `2` browser proxy | if proxy |
+| `POLYMARKET_FUNDER` | your Polymarket wallet address (deposit/proxy/Safe — the one holding funds) | recommended |
+| `POLYMARKET_RELAYER_API_KEY` | relayer key from polymarket.com/settings → API Keys | for approvals/deploy |
+| `POLYMARKET_RELAYER_ADDRESS` | the "relayer address" shown next to that key | with the key |
 | `POLYMARKET_COLLATERAL_TOKEN` | pUSD contract address — makes `/balance` show CLOB V2 cash | optional |
 | `POLYMARKET_API_KEY` / `_API_SECRET` / `_API_PASSPHRASE` | L2 API creds | **no — auto-derived** |
+| `POLYMARKET_SIGNATURE_TYPE` | legacy — the unified SDK auto-detects the wallet type | no (ignored) |
 
-> **CLOB V2 (since 2026-04-28).** Trading uses the `py-clob-client-v2` SDK; the
-> old V1 client no longer works against production (orders 403 with "invalid
-> order version"). Collateral moved from USDC.e to **pUSD** — funds in your
-> Polymarket wallet auto-migrated. `/balance` reads on-chain `balanceOf`, so set
-> `POLYMARKET_COLLATERAL_TOKEN` to the pUSD address (find it under Token Holdings
-> for your funder on polygonscan) for the display to match the site.
+> **Unified SDK (deposit wallets supported).** Trading uses the official
+> `polymarket-client` SDK (repo Polymarket/py-sdk) — the only official client
+> that can place CLOB V2 orders for **email/Magic "deposit wallet" accounts**
+> (the older py-clob-client/-v2 reject them with "maker address not allowed").
+> The SDK auto-detects your wallet type, signs accordingly, and derives L2
+> creds from the key. The **relayer API key** (Settings → API Keys) authorizes
+> gasless wallet operations — first-time deposit-wallet deploy and allowance
+> approvals; an account that already trades via the UI usually places orders
+> without it, but set it so allowance recovery works. Collateral is **pUSD** —
+> set `POLYMARKET_COLLATERAL_TOKEN` to its address (Token Holdings for your
+> funder on polygonscan) so `/balance` matches the site.
 
 **You only need `POLYMARKET_PRIVATE_KEY`.** The three L2 API creds are *not*
 found in any UI — they're derived from the key. The bot does that for you on

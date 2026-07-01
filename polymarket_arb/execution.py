@@ -19,8 +19,10 @@ fill-or-kill and, if any leg fails, attempts to unwind the legs that did fill.
 That unwind can slip. Test in dry-run with $1 first, and watch the first live
 fills by hand.
 
-The live order-placement calls use the official ``py-clob-client-v2`` (CLOB V2;
-the V1 ``py-clob-client`` no longer works against production as of 2026-04-28).
+The live order-placement calls use the official unified SDK ``polymarket-client``
+(repo Polymarket/py-sdk) — the only official client that supports CLOB V2
+"deposit wallets" (the wallet type behind email/Magic accounts; the older
+py-clob-client / py-clob-client-v2 are deprecated and reject those makers).
 They are written to its documented interface but CANNOT be tested from this
 sandbox (no network, no credentials), so VALIDATE them against your installed
 client version before trusting real money to them.
@@ -170,7 +172,9 @@ class ExecutionConfig:
     api_passphrase: Optional[str] = None
     private_key: Optional[str] = None
     funder: Optional[str] = None
-    signature_type: Optional[int] = None  # 0=EOA, 1=email/Magic proxy, 2=browser-wallet proxy
+    signature_type: Optional[int] = None  # legacy; the unified SDK auto-detects wallet type
+    relayer_api_key: Optional[str] = None  # POLYMARKET_RELAYER_API_KEY (settings > API Keys)
+    relayer_address: Optional[str] = None  # POLYMARKET_RELAYER_ADDRESS (shown next to the key)
     rpc_url: Optional[str] = None  # POLYGON_RPC_URL override; falls back to public list
     collateral_token: Optional[str] = None  # POLYMARKET_COLLATERAL_TOKEN (e.g. pUSD) for /balance
     clob_host: str = "https://clob.polymarket.com"
@@ -194,6 +198,8 @@ class ExecutionConfig:
                 int(env["POLYMARKET_SIGNATURE_TYPE"])
                 if env.get("POLYMARKET_SIGNATURE_TYPE") else None
             ),
+            relayer_api_key=env.get("POLYMARKET_RELAYER_API_KEY") or None,
+            relayer_address=env.get("POLYMARKET_RELAYER_ADDRESS") or None,
             rpc_url=env.get("POLYGON_RPC_URL") or None,
             collateral_token=env.get("POLYMARKET_COLLATERAL_TOKEN") or None,
         )
@@ -234,7 +240,16 @@ def simulate(plan: OrderPlan, config: ExecutionConfig) -> str:
 
 
 class PolymarketExecutor:
-    """Places BUY_SET legs via the official py-clob-client (live mode only)."""
+    """Places BUY_SET legs via the official unified SDK ``polymarket-client``.
+
+    The unified SDK (repo Polymarket/py-sdk) is the only official client that
+    supports CLOB V2 "deposit wallets" — the wallet type behind email/Magic
+    accounts. ``SecureClient`` auto-detects the wallet type (EOA / proxy / Safe /
+    deposit wallet), signs orders accordingly (ERC-7739 POLY_1271 for deposit
+    wallets), and derives the L2 API creds from the signing key. The legacy
+    ``py-clob-client-v2`` is deprecated upstream and rejects deposit-wallet
+    makers ("maker address not allowed").
+    """
 
     def __init__(self, config: ExecutionConfig) -> None:
         self.config = config
@@ -247,43 +262,44 @@ class PolymarketExecutor:
         if not ready:
             raise ExecutionError(f"missing credentials for live mode: {missing}")
         try:
-            from py_clob_client_v2.client import ClobClient
-            from py_clob_client_v2.clob_types import ApiCreds
+            from polymarket import RelayerApiKey, SecureClient
         except ImportError as exc:  # pragma: no cover - depends on optional extra
             raise ExecutionError(
-                "py-clob-client-v2 not installed (pip install -r requirements-bot.txt)"
+                "polymarket-client not installed (pip install -r requirements-bot.txt)"
             ) from exc
 
-        # signature_type / funder depend on the account: 0 = trade directly from
-        # the signing EOA; 1 = email/Magic proxy; 2 = browser-wallet proxy. For a
-        # Polymarket-funded account set POLYMARKET_SIGNATURE_TYPE + POLYMARKET_FUNDER
-        # (your Polymarket deposit/proxy address) or orders sign from an unfunded EOA.
-        kwargs = {
-            "host": self.config.clob_host,
-            "key": self.config.private_key,
-            "chain_id": 137,
-        }
+        kwargs = {"private_key": self.config.private_key}
+        # funder = the Polymarket wallet that holds the funds (deposit/proxy/Safe
+        # address). Omitted -> the SDK derives the signer's deposit wallet.
         if self.config.funder:
-            kwargs["funder"] = self.config.funder
-        if self.config.signature_type is not None:
-            kwargs["signature_type"] = self.config.signature_type
-        client = ClobClient(**kwargs)
+            kwargs["wallet"] = self.config.funder
+        # Relayer API key (polymarket.com/settings > API Keys) authorizes gasless
+        # wallet ops: first-time deposit-wallet deploy and allowance approvals.
+        # An account that already trades via the UI usually works without it.
+        if self.config.relayer_api_key and self.config.relayer_address:
+            kwargs["api_key"] = RelayerApiKey(
+                key=self.config.relayer_api_key,
+                address=self.config.relayer_address,
+            )
         if self.config.has_explicit_api_creds:
-            client.set_api_creds(ApiCreds(
-                api_key=self.config.api_key,
-                api_secret=self.config.api_secret,
-                api_passphrase=self.config.api_passphrase,
-            ))
-        else:
-            # Derive (or create) the L2 API creds from the signing key — one
-            # network call, so the user only has to provide the private key.
-            # (V2 renamed create_or_derive_api_creds -> create_or_derive_api_key.)
-            client.set_api_creds(client.create_or_derive_api_key())
+            from polymarket.models import ApiKeyCreds
+
+            kwargs["credentials"] = ApiKeyCreds(
+                key=self.config.api_key,
+                secret=self.config.api_secret,
+                passphrase=self.config.api_passphrase,
+            )
+        try:  # pragma: no cover - requires live network + credentials
+            client = SecureClient.create(**kwargs)
+        except ExecutionError:
+            raise
+        except Exception as exc:
+            raise ExecutionError(f"Polymarket 클라이언트 초기화 실패: {exc}") from exc
         self._client = client
         return self._client
 
     def execute(self, plan: OrderPlan) -> ExecutionResult:
-        """Dry-run unless mode==live; in live mode, place each leg fill-or-kill."""
+        """Dry-run unless mode==live; in live mode, place each leg as a limit order."""
         if self.config.mode != LIVE:
             return ExecutionResult(
                 placed=False,
@@ -294,22 +310,23 @@ class PolymarketExecutor:
 
         client = self._client_or_raise()
         filled: list[str] = []
-        try:  # pragma: no cover - requires live network + credentials
-            from py_clob_client_v2.clob_types import OrderArgs
-            from py_clob_client_v2.order_builder.constants import BUY
-
+        try:
             for leg in plan.legs:
-                args = OrderArgs(
+                # The SDK resolves tick size / neg-risk per token and signs for
+                # the detected wallet type; plan prices already include slippage,
+                # so a GTC limit at that price acts as a marketable order.
+                resp = client.place_limit_order(
                     token_id=leg.token_id,
                     price=round(leg.price, 4),
                     size=round(leg.size, 2),
-                    side=BUY,
+                    side="BUY",
                 )
-                # V2 create_order auto-resolves tick_size + neg_risk per token,
-                # so a plain call works for both regular and neg-risk markets.
-                resp = client.create_and_post_order(args)
-                if not _order_succeeded(resp):
-                    raise ExecutionError(f"leg '{leg.outcome}' did not fill: {resp}")
+                if not getattr(resp, "ok", False):
+                    code = getattr(resp, "code", "?")
+                    message = getattr(resp, "message", str(resp))
+                    raise ExecutionError(
+                        f"leg '{leg.outcome}' 거부됨 ({code}): {message}"
+                    )
                 filled.append(leg.outcome)
 
             return ExecutionResult(
@@ -318,7 +335,7 @@ class PolymarketExecutor:
                 detail=f"'{plan.question}' — {len(filled)}개 레그 전부 체결 완료.",
                 filled_legs=filled,
             )
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             unwound = self._unwind(filled, plan)
             return ExecutionResult(
                 placed=False,
@@ -499,12 +516,3 @@ def _hex_to_usdc(hex_result) -> float:
     if not hex_result or hex_result in ("0x", "0x0"):
         return 0.0
     return int(hex_result, 16) / 1_000_000
-
-
-def _order_succeeded(resp) -> bool:  # pragma: no cover - shape depends on client version
-    if isinstance(resp, dict):
-        return bool(resp.get("success", False)) or resp.get("status") in (
-            "matched",
-            "filled",
-        )
-    return resp is not None

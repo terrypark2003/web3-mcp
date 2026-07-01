@@ -3,9 +3,10 @@
 # only if you run the Telegram bot or place live orders.
 # [job-queue] extra powers the proactive alert loop.
 python-telegram-bot[job-queue]>=20,<22
-# Polymarket migrated to CLOB V2 on 2026-04-28 (new Exchange contracts + pUSD
-# collateral). V1 clients — including the last V1 release py-clob-client 0.34.6 —
-# sign V1-shaped orders the V2 exchange rejects with "invalid order version". The
-# V2 SDK is a separate package. API is near-identical for our usage (ClobClient/
-# OrderArgs/create_and_post_order; create_or_derive_api_creds -> _api_key).
-py-clob-client-v2>=1.0.1
+# Official unified Polymarket SDK (repo Polymarket/py-sdk) — the ONLY official
+# client that can place CLOB V2 orders for "deposit wallet" (email/Magic)
+# accounts (ERC-7739 POLY_1271 signing + relayer integration). py-clob-client
+# and py-clob-client-v2 are deprecated upstream and reject deposit-wallet makers
+# with "maker address not allowed". Beta: pin exact (an exact pre-release pin
+# installs without --pre). Requires Python >= 3.11 (Dockerfile uses 3.12).
+polymarket-client==0.1.0b11

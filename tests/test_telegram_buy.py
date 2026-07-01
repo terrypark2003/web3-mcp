@@ -59,9 +59,10 @@ class TestFavoritesNow(unittest.TestCase):
         self.assertIn("시간 남음", msg)              # ETA always shown
         self.assertIn("무위험 아님", msg)
         self.assertEqual(len(rows), 1)
-        label, data = rows[0][0]
-        self.assertTrue(data.startswith("http"))     # opens the market (manual buy)
-        self.assertTrue(label.startswith("1)"))
+        (buy_label, buy_data), (link_label, link_data) = rows[0]
+        self.assertTrue(buy_data.startswith("f:"))   # auto-buy (two-step confirm)
+        self.assertTrue(buy_label.startswith("1)"))
+        self.assertTrue(link_data.startswith("http"))  # + open-market link
 
     def test_limits_to_five(self):
         favs = [fav(market_id=f"m{i}", token_id=f"t{i}", hours=2.0 + i * 0.01)
@@ -69,7 +70,7 @@ class TestFavoritesNow(unittest.TestCase):
         chunks = make_bot(favs).favorites_now()
         self.assertEqual(len(chunks), 1)
         rows = chunks[0][1]
-        item_rows = [r for r in rows if r[0][1].startswith("http")]
+        item_rows = [r for r in rows if r[0][1].startswith("f:")]
         self.assertEqual(len(item_rows), 5)          # 5 items per page
         self.assertEqual(rows[-1][0][1], "fav_more")  # + a 더보기 button (3 remain)
 
@@ -79,10 +80,10 @@ class TestFavoritesNow(unittest.TestCase):
         bot = make_bot(favs)
         msg1, rows1 = bot.favorites_now()[0]
         self.assertEqual(rows1[-1][0][1], "fav_more")               # page 1 -> 더보기
-        self.assertEqual(len([r for r in rows1 if r[0][1].startswith("http")]), 5)
+        self.assertEqual(len([r for r in rows1 if r[0][1].startswith("f:")]), 5)
         # Tap 더보기 -> the remaining 3, numbered 6.. , and no further 더보기.
         msg2, rows2 = bot.handle_callback(OWNER, "fav_more")
-        self.assertEqual(len([r for r in rows2 if r[0][1].startswith("http")]), 3)
+        self.assertEqual(len([r for r in rows2 if r[0][1].startswith("f:")]), 3)
         self.assertNotIn("fav_more", [r[0][1] for r in rows2])
         self.assertIn("6)", msg2)                                   # numbering continues
         # Nothing left to page.
@@ -111,14 +112,20 @@ class TestFavoritesNow(unittest.TestCase):
         self.assertTrue(bot.favorites_now())
         self.assertTrue(bot.favorites_now())  # on-demand: lists again, not deduped
 
-    def test_button_opens_market_url(self):
-        # CLOB V2 blocks API auto-buy, so the button must be a link to the market.
+    def test_each_item_has_buy_and_open_buttons(self):
+        # Auto-buy is back (official unified SDK supports deposit wallets), and
+        # the open-market link stays as the manual fallback — both per item.
         bot = make_bot([fav(hours=2.0)])             # fav() url = polymarket event link
         msg, rows = bot.favorites_now()[0]
-        label, value = rows[0][0]
-        self.assertEqual(value, "https://polymarket.com/event/x")  # opens that market
-        self.assertIn("폴리마켓에서 매수", label)      # wording = manual buy on Polymarket
-        self.assertIn("직접 매수", msg)               # header explains the link flow
+        (buy_label, buy_ref), (link_label, link_url) = rows[0]
+        self.assertIn("$1 매수", buy_label)
+        self.assertTrue(buy_ref.startswith("f:"))
+        self.assertEqual(link_url, "https://polymarket.com/event/x")
+        self.assertIn("🔗", link_label)
+        # Tapping the buy button stages the two-step confirm as before.
+        staged, buttons = bot.handle_callback(OWNER, buy_ref)
+        self.assertIn("무위험 아님", staged)
+        self.assertEqual(buttons[0][0][1], "fav_confirm")
 
 
 class TestBalance(unittest.TestCase):
