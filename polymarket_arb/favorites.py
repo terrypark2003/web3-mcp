@@ -53,6 +53,22 @@ def days_until(end_date, now: Optional[datetime] = None) -> Optional[float]:
     return (dt - now).total_seconds() / 86400
 
 
+# Crypto markets — mostly hourly "Up or Down" gambles that flood the short
+# windows and aren't favorites in any meaningful sense. Excluded by default
+# (override with NOTIFY_FAV_EXCLUDE / the exclude_terms arg). Matched as
+# case-insensitive substrings of the market question.
+_CRYPTO_TERMS = (
+    "up or down", "bitcoin", "btc", "ethereum", "solana", "dogecoin", "doge",
+    "cardano", "ripple", "xrp", "litecoin", "polkadot", "avalanche",
+    "chainlink", "shiba", "pepe", "binance coin",
+)
+
+
+def _excluded(question, terms) -> bool:
+    q = (question or "").lower()
+    return any(t in q for t in terms)
+
+
 def find_favorites(
     sets,
     *,
@@ -128,6 +144,8 @@ def build_favorites_live(
     max_price: float = 0.91,
     min_size: float = 1.0,
     max_days: Optional[float] = 2.0,
+    book_limit: Optional[int] = 120,
+    exclude_terms: Optional[list[str]] = None,
     now: Optional[datetime] = None,
     debug: bool = False,
 ) -> list[FavoriteBet]:
@@ -135,8 +153,10 @@ def build_favorites_live(
 
     Cheap pre-filter on Gamma's indicative prices + end date keeps order-book
     fetches bounded; the live book is the source of truth for the final decision.
-    ``debug`` prints the funnel counts (and a sample) so a silent feed can be
-    diagnosed from the run log.
+    ``exclude_terms`` drops markets whose question contains any term (default:
+    crypto "Up or Down" hourlies, which flood the short windows and are pure
+    gambles, not favorites — pass ``[]`` to keep them). ``debug`` prints the
+    funnel counts (and a sample) so a silent feed can be diagnosed from the log.
     """
     from .normalize import (
         _maybe_json_list,
@@ -160,12 +180,20 @@ def build_favorites_live(
             "end_date_min": ref.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end_date_max": (ref + timedelta(days=max_days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+    terms = _CRYPTO_TERMS if exclude_terms is None else tuple(
+        t.lower() for t in exclude_terms
+    )
     markets = client.active_markets(extra_params=extra)
     within = []
+    excluded = 0
     for market in markets:
         days = days_until(market.get("endDate"), now)
-        if days is not None and 0 <= days <= window:
-            within.append(market)
+        if days is None or not (0 <= days <= window):
+            continue
+        if terms and _excluded(market.get("question"), terms):
+            excluded += 1
+            continue
+        within.append(market)
 
     candidates = []
     for market in within:
@@ -173,10 +201,19 @@ def build_favorites_live(
         if any(p is not None and lo <= p <= hi for p in prices):
             candidates.append(market)
 
+    # The book fetch is the slow step, and callers only surface the few
+    # soonest-resolving favorites — so price just the soonest in-band candidates
+    # instead of fetching a book for every one. (The indicative-price pre-filter
+    # already trimmed to plausible favorites; this caps the expensive part.)
+    candidates.sort(key=lambda m: (days_until(m.get("endDate"), now) is None,
+                                   days_until(m.get("endDate"), now) or 0.0))
+    priced = candidates if book_limit is None else candidates[:book_limit]
+
     # One-line funnel summary in every run's log makes a silent feed diagnosable
     # at a glance; the per-market dump is only for deep debugging.
     print(f"[favorites] markets={len(markets)} within_{max_days}d={len(within)} "
-          f"in_band[{lo:.2f},{hi:.2f}]={len(candidates)}", flush=True)
+          f"excluded={excluded} in_band[{lo:.2f},{hi:.2f}]={len(candidates)} "
+          f"priced={len(priced)}", flush=True)
     if debug:
         for m in within[:25]:
             d = days_until(m.get("endDate"), now)
@@ -184,12 +221,12 @@ def build_favorites_live(
                   f"{m.get('outcomePrices')}", flush=True)
 
     token_ids: list[str] = []
-    for market in candidates:
+    for market in priced:
         token_ids.extend(str(t) for t in _maybe_json_list(market.get("clobTokenIds")))
     books = client.order_books(token_ids)
 
     sets = [
-        cs for cs in (complete_set_from_market(m, books) for m in candidates)
+        cs for cs in (complete_set_from_market(m, books) for m in priced)
         if cs is not None
     ]
     return find_favorites(

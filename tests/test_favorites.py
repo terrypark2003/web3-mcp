@@ -95,5 +95,89 @@ class TestDemoAndNotify(unittest.TestCase):
         self.assertIsNone(compute_notification(payload, seen)[0])
 
 
+class _SpyClient:
+    """Captures the token ids passed to order_books (to assert book_limit)."""
+
+    def __init__(self, markets):
+        self._markets = markets
+        self.priced_ids = None
+
+    def active_markets(self, extra_params=None):
+        return self._markets
+
+    def order_books(self, token_ids):
+        self.priced_ids = list(token_ids)
+        return {}
+
+
+def _mkt(i, hours, price=0.88, question=None):
+    end = (NOW + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "question": question if question is not None else f"m{i}",
+        "endDate": end,
+        "outcomePrices": f'["{price}", "{round(1 - price, 2)}"]',
+        "clobTokenIds": f'["tok{i}a", "tok{i}b"]',
+    }
+
+
+class TestFavoritesSpeed(unittest.TestCase):
+    def test_book_limit_prices_only_soonest(self):
+        from polymarket_arb.favorites import build_favorites_live
+        # 5 in-band markets at 5,4,3,2,1 h; book_limit=2 -> price the 2 soonest.
+        markets = [_mkt(i, hours=h) for i, h in enumerate([5, 4, 3, 2, 1])]
+        client = _SpyClient(markets)
+        build_favorites_live(client, min_price=0.80, max_price=0.91, min_size=1,
+                             max_days=1.0, book_limit=2, now=NOW)
+        self.assertEqual(set(client.priced_ids),
+                         {"tok4a", "tok4b", "tok3a", "tok3b"})  # 1h + 2h markets
+
+    def test_order_books_chunks_and_merges(self):
+        from unittest import mock
+
+        from polymarket_arb.client import PolymarketClient
+        client = PolymarketClient()
+        sizes = []
+
+        class Resp:
+            def __init__(self, ids):
+                self._ids = ids
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return [{"asset_id": t} for t in self._ids]
+
+        def fake_post(url, json=None, timeout=None):
+            ids = [d["token_id"] for d in json]
+            sizes.append(len(ids))
+            return Resp(ids)
+
+        with mock.patch.object(client.session, "post", side_effect=fake_post):
+            books = client.order_books([f"t{i}" for i in range(120)], chunk_size=50)
+        self.assertEqual(len(books), 120)               # all merged
+        self.assertEqual(sorted(sizes), [20, 50, 50])   # chunked (no giant POST)
+
+    def test_excludes_crypto_by_default(self):
+        from polymarket_arb.favorites import build_favorites_live
+        markets = [
+            _mkt("btc", hours=1, question="Bitcoin Up or Down - June 30, 4AM ET"),
+            _mkt("temp", hours=2, question="Will the highest temperature in Houston be 90F?"),
+        ]
+        client = _SpyClient(markets)
+        build_favorites_live(client, min_price=0.80, max_price=0.91, min_size=1,
+                             max_days=1.0, now=NOW)
+        # Crypto dropped; only the 2h weather market is priced.
+        self.assertEqual(set(client.priced_ids), {"toktempa", "toktempb"})
+
+    def test_exclude_terms_empty_keeps_crypto(self):
+        from polymarket_arb.favorites import build_favorites_live
+        markets = [_mkt("btc", hours=1, question="Bitcoin Up or Down")]
+        client = _SpyClient(markets)
+        build_favorites_live(client, min_price=0.80, max_price=0.91, min_size=1,
+                             max_days=1.0, exclude_terms=[], now=NOW)
+        self.assertEqual(set(client.priced_ids), {"tokbtca", "tokbtcb"})  # not excluded
+
+
 if __name__ == "__main__":
     unittest.main()
