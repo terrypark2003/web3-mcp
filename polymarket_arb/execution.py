@@ -254,6 +254,7 @@ class PolymarketExecutor:
     def __init__(self, config: ExecutionConfig) -> None:
         self.config = config
         self._client = None
+        self._ticks: dict = {}  # token_id -> Decimal tick size (cached per run)
 
     def _client_or_raise(self):
         if self._client is not None:
@@ -312,12 +313,15 @@ class PolymarketExecutor:
         filled: list[str] = []
         try:
             for leg in plan.legs:
-                # The SDK resolves tick size / neg-risk per token and signs for
-                # the detected wallet type; plan prices already include slippage,
-                # so a GTC limit at that price acts as a marketable order.
+                # The SDK VALIDATES (doesn't round) price precision against the
+                # market's tick size — e.g. 0.9393 on a 0.01-tick market is
+                # rejected with "price must conform to tick size". Quantize the
+                # marketable limit price UP to the tick grid (keeps it
+                # marketable; adds at most one tick over the slippage price).
+                tick = self._tick_size(leg.token_id)
                 resp = client.place_limit_order(
                     token_id=leg.token_id,
-                    price=round(leg.price, 4),
+                    price=_quantize_buy_price(leg.price, tick),
                     size=round(leg.size, 2),
                     side="BUY",
                 )
@@ -346,6 +350,36 @@ class PolymarketExecutor:
                 ),
                 filled_legs=filled,
             )
+
+    def _tick_size(self, token_id: str):
+        """The market's minimum tick for ``token_id`` (public CLOB endpoint, cached).
+
+        Falls back to 0.01 — the tick used by virtually all Polymarket markets —
+        if the lookup fails, so a transient hiccup degrades to the common case
+        instead of blocking the order.
+        """
+        from decimal import Decimal
+
+        cached = self._ticks.get(token_id)
+        if cached is not None:
+            return cached
+        import requests  # local import: only needed for the live path
+
+        tick = Decimal("0.01")
+        try:  # pragma: no cover - live endpoint; parsing covered via cache tests
+            resp = requests.get(
+                f"{self.config.clob_host}/tick-size",
+                params={"token_id": token_id},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            raw = resp.json().get("minimum_tick_size")
+            if raw is not None:
+                tick = Decimal(str(raw))
+        except (requests.RequestException, ValueError, ArithmeticError):
+            pass
+        self._ticks[token_id] = tick
+        return tick
 
     def usdc_balance(self) -> float:
         """Collateral held by the funder address, read on-chain (``balanceOf``).
@@ -474,6 +508,18 @@ class PolymarketExecutor:
             f"attempted to sell {filled_outcomes} at market — verify manually; "
             "unwind may have slipped"
         )
+
+
+def _quantize_buy_price(price: float, tick):
+    """Snap a marketable BUY limit price UP to the tick grid, clamped to
+    ``[tick, 1 - tick]`` (the CLOB's valid range). Rounding up keeps the order
+    marketable and costs at most one tick over the slippage-adjusted price;
+    rounding down could leave it resting unfilled.
+    """
+    from decimal import ROUND_CEILING, Decimal
+
+    p = (Decimal(str(price)) / tick).to_integral_value(rounding=ROUND_CEILING) * tick
+    return min(max(p, tick), Decimal(1) - tick)
 
 
 # Polymarket public Data API (no auth) — open positions keyed by proxy address.

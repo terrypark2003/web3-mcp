@@ -170,15 +170,24 @@ class TestLiveExecuteWithStubClient(unittest.TestCase):
     and branches on resp.ok — no SDK imports inside the loop."""
 
     def _executor(self, resp):
+        from decimal import Decimal
+
         cfg = ExecutionConfig.from_env({
             "EXECUTION_MODE": "live", "POLYMARKET_PRIVATE_KEY": "0xabc",
         })
         ex = PolymarketExecutor(cfg)
         ex._client = _StubClient(resp)   # bypass network client construction
+        # Seed the tick cache so the executor never hits the live /tick-size
+        # endpoint in tests (buy_set_op legs use token ids "yes"/"no").
+        ex._ticks = {"yes": Decimal("0.01"), "no": Decimal("0.01")}
         return ex
 
     def test_accepted_marks_placed_and_sends_buy_legs(self):
-        plan = build_order_plan(buy_set_op(), max_stake=1.0)
+        from decimal import Decimal
+
+        # slippage=0.01 makes the raw limit prices 0.6262 / 0.3636 — exactly the
+        # shape the SDK rejects on a 0.01-tick market unless quantized.
+        plan = build_order_plan(buy_set_op(), max_stake=1.0, slippage=0.01)
         ex = self._executor(_Accepted())
         result = ex.execute(plan)
         self.assertTrue(result.placed)
@@ -187,6 +196,10 @@ class TestLiveExecuteWithStubClient(unittest.TestCase):
             self.assertEqual(call["side"], "BUY")
             self.assertIn("token_id", call)
             self.assertGreater(call["size"], 0)
+        # Prices are tick-quantized UP: 0.6262 -> 0.63, 0.3636 -> 0.37 — never
+        # more decimals than the 0.01 tick allows (the SDK rejects those).
+        self.assertEqual(ex._client.calls[0]["price"], Decimal("0.63"))
+        self.assertEqual(ex._client.calls[1]["price"], Decimal("0.37"))
 
     def test_rejected_reports_code_and_does_not_continue(self):
         plan = build_order_plan(buy_set_op(), max_stake=1.0)
@@ -195,6 +208,37 @@ class TestLiveExecuteWithStubClient(unittest.TestCase):
         self.assertFalse(result.placed)
         self.assertIn("not_enough_balance", result.detail)   # actionable error code
         self.assertEqual(len(ex._client.calls), 1)           # stopped at first reject
+
+
+class TestQuantizeBuyPrice(unittest.TestCase):
+    """The unified SDK rejects prices finer than the market tick — the exact
+    live failure was 0.9393 on a 0.01-tick market ("price must conform to tick
+    size 0.01"). Quantize UP so the order stays marketable."""
+
+    def _q(self, price, tick):
+        from decimal import Decimal
+
+        from polymarket_arb.execution import _quantize_buy_price
+        return _quantize_buy_price(price, Decimal(tick))
+
+    def test_rounds_up_to_the_tick(self):
+        from decimal import Decimal
+        self.assertEqual(self._q(0.9393, "0.01"), Decimal("0.94"))  # the live failure
+        self.assertEqual(self._q(0.6262, "0.01"), Decimal("0.63"))
+
+    def test_exact_price_unchanged(self):
+        from decimal import Decimal
+        self.assertEqual(self._q(0.94, "0.01"), Decimal("0.94"))
+
+    def test_finer_tick_keeps_more_precision(self):
+        from decimal import Decimal
+        self.assertEqual(self._q(0.9393, "0.001"), Decimal("0.940"))
+        self.assertEqual(self._q(0.9391, "0.001"), Decimal("0.940"))
+
+    def test_clamped_to_valid_range(self):
+        from decimal import Decimal
+        self.assertEqual(self._q(0.999, "0.01"), Decimal("0.99"))   # <= 1 - tick
+        self.assertEqual(self._q(0.001, "0.01"), Decimal("0.01"))   # >= tick
 
 
 if __name__ == "__main__":
